@@ -13,7 +13,6 @@ interface AuthState {
     location: string;
     password: string;
     energyType?: string;
-    initialTokenBalance?: number;
   }) => Promise<void>;
   logout: () => void;
   refresh: () => Promise<void>;

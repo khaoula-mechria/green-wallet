@@ -37,7 +37,7 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await register({ name, type, location, password, initialTokenBalance: type === "consumer" ? 20 : 0 });
+      await register({ name, type, location, password });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Registration failed");
     } finally {

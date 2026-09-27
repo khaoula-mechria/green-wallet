@@ -63,7 +63,9 @@ describe("API integration", () => {
 
     const buyer = await request(app)
       .post("/api/auth/register")
-      .send({ id: "buyer-1", name: "Buyer", type: "consumer", location: "Tunis", password: "password123", initialTokenBalance: 10 });
+      .send({ id: "buyer-1", name: "Buyer", type: "consumer", location: "Tunis", password: "password123" });
+    // Starting TEC comes from the server-side consumer signup grant.
+    expect(buyer.body.data.household.tokenBalance).toBeGreaterThan(0);
     const buyerToken = buyer.body.data.token;
 
     const purchase = await request(app)

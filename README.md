@@ -47,8 +47,9 @@ wrapped in DB transactions; plaintext private keys → encrypted at rest; etc).
   preconditions are checked and enforced atomically in `TradeService`, with a documented
   swap-in point for a real Hedera Smart Contract later.
 - **Dashboard, blockchain explorer, microgrid view** — live, polling UI with charts.
-- **Tests** — 30 tests across surplus/deficit calc, offers, trades, token transfers,
-  blockchain hashing/validation, and double-spend/duplicate-execution prevention.
+- **Tests** — 48 tests across surplus/deficit calc, offers, trades, token transfers,
+  blockchain hashing/validation, double-spend/duplicate-execution prevention, and API
+  security (authorization, input validation, authenticated WebSocket, config checks).
 
 ## Architecture
 
@@ -107,16 +108,23 @@ docker-compose.yml
 
 ### Option A — Docker (recommended, matches production topology)
 
+The compose stack runs with `NODE_ENV=production`, so it needs real secrets and has
+all demo features off by default:
+
 ```bash
+cp .env.example .env
+# edit .env: set JWT_SECRET and KEY_ENCRYPTION_SECRET (>= 32 chars each, different).
+# For a local demo, also set SEED_DEMO_DATA, SIMULATION_ENABLED and
+# MANUAL_MEASUREMENTS_ENABLED to true, and SIGNUP_GRANT_TEC=20.
 docker compose up --build
 ```
 
 - Frontend: http://localhost:8080
 - Backend: http://localhost:4000
-- The database is empty on first boot, so the backend **auto-seeds** 5 producers + 5
-  consumers on startup (see `src/scripts/seedData.ts` — same data `npm run seed` uses).
-- Login with any of `producer-1`..`producer-5` / `consumer-1`..`consumer-5`, password
-  `password123`.
+- With `SEED_DEMO_DATA=true`, an empty database is **auto-seeded** with 5 producers + 5
+  consumers (see `src/scripts/seedData.ts` — same data `npm run seed` uses). Log in
+  with any of `producer-1`..`producer-5` / `consumer-1`..`consumer-5`, password
+  `password123`. Never enable this on a real deployment.
 
 ### Option B — local dev (two terminals)
 
@@ -138,8 +146,18 @@ Open http://localhost:5173.
 ## Configuration
 
 See [`backend/.env.example`](./backend/.env.example) for every variable. Nothing is
-required to run locally — all defaults are safe for a demo. **Do change `JWT_SECRET` and
-`KEY_ENCRYPTION_SECRET` before any real deployment.**
+required to run locally — in development the defaults enable demo data, the
+simulation and manual meter readings.
+
+With `NODE_ENV=production` the defaults flip to safe values, and the backend **refuses to
+start** unless:
+
+- `JWT_SECRET` and `KEY_ENCRYPTION_SECRET` are set, at least 32 characters, distinct,
+  and not the placeholders;
+- `CORS_ORIGIN` is not `*` (leave it unset when the frontend is served same-origin).
+
+Demo seeding, the simulation and manual (self-reported) meter readings are off unless
+explicitly enabled, and the server logs a warning if they are.
 
 ## Blockchain mode: local vs. real Hedera testnet
 
@@ -177,7 +195,10 @@ npm test
 surplus), trade purchase end-to-end, insufficient token balance, insufficient offer
 energy, trade completion, block creation/hashing, block hash validation, tampered-block
 detection, and duplicate-execution/double-spend prevention (both on offer capacity and
-on trade settlement).
+on trade settlement) — plus 18 security tests (`tests/integration/security.test.ts`):
+client-chosen balances rejected, meter-reading caps and rate limits, owner-only access
+to wallets/trades/meter history, WebSocket authentication, and production config
+validation.
 
 ## Docker
 
@@ -207,7 +228,9 @@ a named volume) and `frontend` (static build served by nginx, port 8080, proxyin
   "reduce central coordination" roadmap item (Phase 5); horizontal scaling would need a
   networked database and a real distributed consensus layer.
 - **No real IoT/meter integration** — measurements are simulated or manually submitted,
-  matching the reference doc's own Phase 3 gap.
+  matching the reference doc's own Phase 3 gap. Manual readings are capped and
+  rate-limited, and off by default in production, but they are still self-reported:
+  trustworthy minting needs signed readings from real meters.
 - **Trade "smart contract" is application code, not an on-chain contract** — preconditions
   are enforced by `TradeService`, not by Hedera Smart Contract Service. The
   `BlockchainService` boundary is exactly where that migration (reference doc's Phase 4)

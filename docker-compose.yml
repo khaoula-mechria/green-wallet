@@ -7,13 +7,20 @@ services:
       NODE_ENV: production
       PORT: 4000
       DB_PATH: /app/data/green-wallet.db
-      CORS_ORIGIN: "*"
-      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
-      KEY_ENCRYPTION_SECRET: ${KEY_ENCRYPTION_SECRET:-dev-insecure-key-encryption-secret}
-      SIMULATION_ENABLED: "true"
+      # CORS_ORIGIN is intentionally unset: the frontend reaches the API
+      # same-origin through nginx, so no cross-origin access is allowed.
+      # Required — the backend refuses to boot with missing/placeholder secrets.
+      # Put them in a .env file next to this one (see .env.example).
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env (see .env.example)}
+      KEY_ENCRYPTION_SECRET: ${KEY_ENCRYPTION_SECRET:?set KEY_ENCRYPTION_SECRET in .env (see .env.example)}
+      # Demo features: off unless explicitly enabled in .env.
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      SIMULATION_ENABLED: ${SIMULATION_ENABLED:-false}
+      MANUAL_MEASUREMENTS_ENABLED: ${MANUAL_MEASUREMENTS_ENABLED:-false}
+      SIGNUP_GRANT_TEC: ${SIGNUP_GRANT_TEC:-0}
       SIMULATION_TICK_MS: 5000
       SIMULATION_MINUTES_PER_TICK: 30
-      # Leave blank (default) for local/simulated blockchain mode. See .env.example.
+      # Leave blank (default) for local/simulated blockchain mode. See backend/.env.example.
       HEDERA_OPERATOR_ID: ${HEDERA_OPERATOR_ID:-}
       HEDERA_OPERATOR_KEY: ${HEDERA_OPERATOR_KEY:-}
       HEDERA_TOKEN_ID: ${HEDERA_TOKEN_ID:-}

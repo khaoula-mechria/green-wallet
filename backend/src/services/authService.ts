@@ -15,6 +15,8 @@ export interface RegisterInput {
   location: string;
   password: string;
   energyType?: string;
+  /** Trusted callers only (seeding, the register route's server-side grant) —
+   * never pass a client-supplied value through. */
   initialTokenBalance?: number;
 }
 
