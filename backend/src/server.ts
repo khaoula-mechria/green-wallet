@@ -21,12 +21,29 @@ const app = createApp(container);
 const httpServer = createServer(app);
 attachWebSocketServer(httpServer, container.notifications);
 
+function reportIntegrity() {
+  const { chain, reconciliation } = container.ledger.checkIntegrity();
+  if (chain.valid && reconciliation.ok) {
+    console.log(`[ledger] integrity OK: ${chain.blocksChecked} blocks verified${chain.legacyBlocks ? ` (${chain.legacyBlocks} legacy id-only hashes)` : ""}, balances reconcile`);
+    return;
+  }
+  console.error("[ledger] INTEGRITY PROBLEMS DETECTED — run `npm run ledger:check` for details");
+  for (const e of chain.errors.slice(0, 10)) console.error(`  block ${e.blockIndex}: ${e.reason}`);
+  for (const m of reconciliation.balanceMismatches.slice(0, 10)) {
+    console.error(`  household ${m.householdId}: balance ${m.balanceMicro} µTEC != history ${m.historyMicro} µTEC`);
+  }
+  for (const m of reconciliation.ledgerMismatches.slice(0, 10)) console.error(`  token tx ${m.tokenTxId}: ${m.reason}`);
+}
+
 async function start() {
   const householdCount = (db.prepare(`SELECT COUNT(*) as n FROM households`).get() as { n: number }).n;
   if (householdCount === 0 && env.seedDemoData) {
     console.log("[server] empty database detected — seeding demo households (5 producers + 5 consumers)");
     await seedDemoData(container, (msg) => console.log(msg));
   }
+
+  reportIntegrity();
+  container.ledger.start(env.ledgerMaintenanceIntervalMs);
 
   httpServer.listen(env.port, () => {
     console.log(`[server] listening on http://localhost:${env.port} (${env.nodeEnv})`);
@@ -42,6 +59,7 @@ void start();
 
 function shutdown() {
   container.simulation.stop();
+  container.ledger.stop();
   httpServer.close(() => process.exit(0));
 }
 

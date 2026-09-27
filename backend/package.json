@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "init:token": "tsx src/scripts/initToken.ts",
-    "seed": "tsx src/scripts/seed.ts"
+    "seed": "tsx src/scripts/seed.ts",
+    "ledger:check": "tsx src/scripts/ledgerCheck.ts"
   },
   "dependencies": {
     "@hashgraph/sdk": "^2.53.0",

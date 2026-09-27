@@ -11,4 +11,10 @@ export function createBlockchainService(db: Database): BlockchainService {
   return new LocalBlockchainService(db);
 }
 
-export type { BlockchainService, ChainTransactionInput, ChainTransactionResult } from "./BlockchainService.js";
+export type {
+  BlockchainService,
+  ChainTransactionInput,
+  ChainTransactionResult,
+  AnchorReport,
+  ChainVerification,
+} from "./BlockchainService.js";

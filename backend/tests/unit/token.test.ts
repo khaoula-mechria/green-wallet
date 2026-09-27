@@ -51,7 +51,17 @@ describe("TokenService — TEC balances and transfers", () => {
     const b = await seedHousehold(c);
     await c.tokens.transfer(a.id, b.id, 3);
 
-    expect(c.tokens.getHistory(a.id)).toHaveLength(1);
-    expect(c.tokens.getHistory(b.id)).toHaveLength(1);
+    // a: the starting GRANT + the transfer out; b: the transfer in.
+    expect(c.tokens.getHistory(a.id).map((t) => t.type).sort()).toEqual(["GRANT", "TRANSFER"]);
+    expect(c.tokens.getHistory(b.id).map((t) => t.type)).toEqual(["TRANSFER"]);
+  });
+
+  it("records starting balances as ledger-backed GRANTs", async () => {
+    const c = buildTestContainer();
+    const a = await seedHousehold(c, { initialTokenBalance: 10 });
+    const [grant] = c.tokens.getHistory(a.id);
+    expect(grant.type).toBe("GRANT");
+    expect(grant.amount).toBe(10);
+    expect(grant.blockchainTxId).toBeTruthy();
   });
 });

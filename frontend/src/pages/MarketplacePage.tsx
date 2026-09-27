@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, newIdempotencyKey } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
 import type { EnergyOffer } from "../types";
@@ -48,7 +48,9 @@ export function MarketplacePage() {
     }
     setPurchasingId(offer.id);
     try {
-      await api.post(`/market/offers/${offer.id}/purchase`, { amountKwh: amount });
+      // One key per click: if this request is retried (network hiccup), the
+      // server returns the original trade instead of buying twice.
+      await api.post(`/market/offers/${offer.id}/purchase`, { amountKwh: amount }, { "Idempotency-Key": newIdempotencyKey() });
       await reload();
       await refresh();
     } catch (err) {

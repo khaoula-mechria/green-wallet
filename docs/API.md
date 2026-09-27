@@ -12,6 +12,9 @@ household the data belongs to (others get `403`).
 
 Request bodies are validated strictly: unknown fields are rejected with `400`.
 
+Amounts are decimal kWh / TEC in requests and responses, stored exactly as integers:
+energy has 0.001 kWh (1 Wh) precision and TEC 0.000001 precision; finer input is rounded.
+
 ## Auth
 
 | Method | Path | Body | Auth |
@@ -60,6 +63,13 @@ authenticated household. Because these readings are self-reported:
 Creating an offer escrows `amountKwh` out of the seller's sellable energy balance.
 Cancelling refunds whatever wasn't sold.
 
+**Purchases are atomic and idempotent.** A purchase either fully completes (tokens,
+energy, offer and ledger block together) or changes nothing. Send an optional
+`Idempotency-Key` header (8–128 chars of `[A-Za-z0-9_.:-]`, unique per purchase attempt):
+retrying with the same key returns the original trade with `200` and
+`Idempotent-Replayed: true` instead of buying twice; reusing a key for a different
+offer/amount returns `409`. A purchase whose total would round to 0 TEC is rejected.
+
 ## Trades
 
 | Method | Path | Auth |
@@ -85,9 +95,16 @@ Cancelling refunds whatever wasn't sold.
 | Method | Path | Auth |
 |---|---|---|
 | GET | `/blockchain/status` | — |
+| GET | `/blockchain/verify` | — |
 | GET | `/blockchain/blocks?limit=100` | — |
 | GET | `/blockchain/blocks/:index` | — |
 | GET | `/blockchain/transactions?limit=200` | — |
+
+`/blockchain/verify` recomputes every block hash from its transactions' contents and
+checks every chain link: `{ valid, blocksChecked, legacyBlocks, errors: [{ blockIndex,
+reason }] }`. `/blockchain/status` includes `anchoring` counts (`none`, `pending`,
+`anchored`, `failed`) for Hedera mode. Transaction `type` is `GRANT` (policy-issued TEC,
+e.g. signup grant), `MINT` (TEC issued against surplus energy), `TRANSFER` or `TRADE`.
 
 ## Dashboard / microgrid
 

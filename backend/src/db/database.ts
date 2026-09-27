@@ -1,12 +1,16 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { env } from "../config/env.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { runMigrations } from "./migrations.js";
 
 let dbInstance: Database.Database | null = null;
+
+function configure(db: Database.Database): void {
+  db.pragma("foreign_keys = ON");
+  // Wait for a competing writer (e.g. a second process) instead of failing.
+  db.pragma("busy_timeout = 5000");
+}
 
 export function getDatabase(): Database.Database {
   if (dbInstance) return dbInstance;
@@ -18,10 +22,8 @@ export function getDatabase(): Database.Database {
 
   dbInstance = new Database(env.dbPath);
   dbInstance.pragma("journal_mode = WAL");
-  dbInstance.pragma("foreign_keys = ON");
-
-  const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf-8");
-  dbInstance.exec(schema);
+  configure(dbInstance);
+  runMigrations(dbInstance, (msg) => console.log(msg));
 
   return dbInstance;
 }
@@ -29,9 +31,8 @@ export function getDatabase(): Database.Database {
 /** Used by tests to get a fresh in-memory database. */
 export function createInMemoryDatabase(): Database.Database {
   const db = new Database(":memory:");
-  db.pragma("foreign_keys = ON");
-  const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf-8");
-  db.exec(schema);
+  configure(db);
+  runMigrations(db);
   return db;
 }
 
