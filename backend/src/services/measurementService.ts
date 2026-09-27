@@ -5,6 +5,7 @@ import { MeasurementRepository } from "../db/repositories/measurementRepository.
 import type { EnergyMeasurement, TokenTransaction } from "../domain/types.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import type { TokenService } from "./tokenService.js";
+import { env } from "../config/env.js";
 
 export interface RecordMeasurementResult {
   measurement: EnergyMeasurement;
@@ -33,7 +34,15 @@ export class MeasurementService {
     consumption: number,
     timestamp: number = Date.now()
   ): Promise<RecordMeasurementResult> {
+    if (!Number.isFinite(production) || !Number.isFinite(consumption)) {
+      throw new ValidationError("production/consumption must be finite numbers");
+    }
     if (production < 0 || consumption < 0) throw new ValidationError("production/consumption must be >= 0");
+    // Surplus is minted 1:1 into TEC, so an unbounded reading would be an
+    // unbounded mint. Cap every reading at a plausible per-interval maximum.
+    if (production > env.measurementMaxKwh || consumption > env.measurementMaxKwh) {
+      throw new ValidationError(`production/consumption must be <= ${env.measurementMaxKwh} kWh per reading`);
+    }
     const household = this.households.findById(householdId);
     if (!household) throw new NotFoundError("Household");
 

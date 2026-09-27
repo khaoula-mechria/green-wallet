@@ -9,8 +9,10 @@ import { env } from "./config/env.js";
 export function createApp(container: Container) {
   const app = express();
 
-  app.use(cors({ origin: env.corsOrigin }));
-  app.use(express.json());
+  // `false` (production default) sends no CORS headers: the frontend is served
+  // same-origin behind nginx, so no cross-origin access is needed.
+  if (env.corsOrigin !== false) app.use(cors({ origin: env.corsOrigin }));
+  app.use(express.json({ limit: "16kb" }));
 
   // Applies to mutating/sensitive endpoints only, matching the reference
   // architecture's documented gap being closed here.
