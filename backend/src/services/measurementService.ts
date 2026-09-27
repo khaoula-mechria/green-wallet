@@ -2,7 +2,9 @@ import type { Database } from "better-sqlite3";
 import { v4 as uuid } from "uuid";
 import { HouseholdRepository } from "../db/repositories/householdRepository.js";
 import { MeasurementRepository } from "../db/repositories/measurementRepository.js";
+import { atomic } from "../db/transaction.js";
 import type { EnergyMeasurement, TokenTransaction } from "../domain/types.js";
+import { MICRO_PER_WH_MINTED, kwhToWh } from "../domain/units.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import type { TokenService } from "./tokenService.js";
 import { env } from "../config/env.js";
@@ -17,13 +19,15 @@ export interface RecordMeasurementResult {
  * reported (production/consumption in kWh) and derives surplus/deficit.
  * A positive surplus is immediately tokenized (surplus kWh -> TEC) via
  * TokenService — this is the "surplus calculation -> blockchain/token
- * system" step of the pipeline described in the spec.
+ * system" step of the pipeline described in the spec. The reading and its
+ * mint commit together: there is never a reading without its tokens, or
+ * tokens without their reading.
  */
 export class MeasurementService {
   private readonly households: HouseholdRepository;
   private readonly measurements: MeasurementRepository;
 
-  constructor(db: Database, private readonly tokenService: TokenService) {
+  constructor(private readonly db: Database, private readonly tokenService: TokenService) {
     this.households = new HouseholdRepository(db);
     this.measurements = new MeasurementRepository(db);
   }
@@ -43,29 +47,23 @@ export class MeasurementService {
     if (production > env.measurementMaxKwh || consumption > env.measurementMaxKwh) {
       throw new ValidationError(`production/consumption must be <= ${env.measurementMaxKwh} kWh per reading`);
     }
-    const household = this.households.findById(householdId);
-    if (!household) throw new NotFoundError("Household");
+    const productionWh = kwhToWh(production, "production");
+    const consumptionWh = kwhToWh(consumption, "consumption");
 
-    const surplus = Number((production - consumption).toFixed(4));
+    return atomic(this.db, () => {
+      if (!this.households.exists(householdId)) throw new NotFoundError("Household");
 
-    const measurement: EnergyMeasurement = {
-      id: uuid(),
-      householdId,
-      timestamp,
-      production,
-      consumption,
-      surplus,
-    };
+      const measurement = this.measurements.insert({ id: uuid(), householdId, timestamp, productionWh, consumptionWh });
+      this.households.updateSnapshot(householdId, productionWh, consumptionWh, timestamp);
 
-    this.measurements.insert(measurement);
-    this.households.updateSnapshot(householdId, production, consumption, timestamp);
+      const surplusWh = productionWh - consumptionWh;
+      const mintTx =
+        surplusWh > 0
+          ? this.tokenService.issueInTx("MINT", householdId, surplusWh * MICRO_PER_WH_MINTED, { reason: "energy-surplus-tokenization", measurementId: measurement.id }, surplusWh)
+          : null;
 
-    let mintTx: TokenTransaction | null = null;
-    if (surplus > 0) {
-      mintTx = await this.tokenService.mint(householdId, surplus);
-    }
-
-    return { measurement, mintTx };
+      return { measurement, mintTx };
+    });
   }
 
   getRecent(limit = 100): EnergyMeasurement[] {
@@ -73,7 +71,7 @@ export class MeasurementService {
   }
 
   getForHousehold(householdId: string, limit = 50): EnergyMeasurement[] {
-    if (!this.households.findById(householdId)) throw new NotFoundError("Household");
+    if (!this.households.exists(householdId)) throw new NotFoundError("Household");
     return this.measurements.findByHousehold(householdId, limit);
   }
 }

@@ -1,8 +1,10 @@
 import type { Database } from "better-sqlite3";
 import { v4 as uuid } from "uuid";
 import { HouseholdRepository } from "../db/repositories/householdRepository.js";
-import { OfferRepository } from "../db/repositories/offerRepository.js";
+import { OfferRepository, offerToDomain, type OfferRow } from "../db/repositories/offerRepository.js";
+import { atomic } from "../db/transaction.js";
 import type { EnergyOffer } from "../domain/types.js";
+import { kwhToWh, tecToMicro, whToKwh } from "../domain/units.js";
 import { NotFoundError, ValidationError, ForbiddenError, ConflictError } from "../utils/errors.js";
 
 /**
@@ -22,55 +24,48 @@ export class MarketplaceService {
   }
 
   createOffer(sellerId: string, amountKwh: number, pricePerKwh: number): EnergyOffer {
-    if (amountKwh <= 0) throw new ValidationError("amountKwh must be positive");
-    if (pricePerKwh <= 0) throw new ValidationError("pricePerKwh must be positive");
+    const amountWh = kwhToWh(amountKwh, "amountKwh");
+    const priceMicroPerKwh = tecToMicro(pricePerKwh, "pricePerKwh");
+    if (amountWh <= 0) throw new ValidationError("amountKwh must be positive (minimum 0.001 kWh)");
+    if (priceMicroPerKwh <= 0) throw new ValidationError("pricePerKwh must be positive (minimum 0.000001 TEC)");
 
-    const seller = this.households.findById(sellerId);
-    if (!seller) throw new NotFoundError("Seller household");
+    return atomic(this.db, () => {
+      const seller = this.households.findById(sellerId);
+      if (!seller) throw new NotFoundError("Seller household");
 
-    const now = Date.now();
-    const offer: EnergyOffer = {
-      id: uuid(),
-      sellerId,
-      amountKwh,
-      amountRemainingKwh: amountKwh,
-      pricePerKwh,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const run = this.db.transaction(() => {
-      // Re-read inside the transaction to guard against a concurrent mutation
-      // of the seller's balance between the check above and this write.
-      const fresh = this.households.findById(sellerId)!;
-      if (fresh.energyBalance < amountKwh) {
+      const now = Date.now();
+      if (!this.households.debitEnergy(sellerId, amountWh, now)) {
         throw new ValidationError(
-          `insufficient surplus: has ${fresh.energyBalance.toFixed(2)} kWh available, offer requires ${amountKwh.toFixed(2)} kWh`
+          `insufficient surplus: has ${seller.energyBalance.toFixed(2)} kWh available, offer requires ${whToKwh(amountWh).toFixed(2)} kWh`
         );
       }
-      this.households.adjustBalances(sellerId, -amountKwh, 0, now);
-      this.offers.insert(offer);
+      const row: OfferRow = {
+        id: uuid(),
+        sellerId,
+        amountWh,
+        amountRemainingWh: amountWh,
+        priceMicroPerKwh,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.offers.insert(row);
+      return offerToDomain(row);
     });
-    run();
-
-    return offer;
   }
 
   cancelOffer(sellerId: string, offerId: string): EnergyOffer {
-    const offer = this.offers.findById(offerId);
-    if (!offer) throw new NotFoundError("Offer");
-    if (offer.sellerId !== sellerId) throw new ForbiddenError("only the seller can cancel this offer");
-    if (offer.status !== "active") throw new ConflictError(`offer is already ${offer.status}`);
+    return atomic(this.db, () => {
+      const offer = this.offers.findRow(offerId);
+      if (!offer) throw new NotFoundError("Offer");
+      if (offer.sellerId !== sellerId) throw new ForbiddenError("only the seller can cancel this offer");
 
-    const now = Date.now();
-    const run = this.db.transaction(() => {
-      this.households.adjustBalances(sellerId, offer.amountRemainingKwh, 0, now);
-      this.offers.updateRemainingAndStatus(offerId, 0, "cancelled", now);
+      const now = Date.now();
+      if (!this.offers.cancel(offerId, now)) throw new ConflictError(`offer is already ${offer.status}`);
+      this.households.creditEnergy(sellerId, offer.amountRemainingWh, now);
+
+      return offerToDomain({ ...offer, amountRemainingWh: 0, status: "cancelled", updatedAt: now });
     });
-    run();
-
-    return { ...offer, amountRemainingKwh: 0, status: "cancelled", updatedAt: now };
   }
 
   getActiveOffers(): EnergyOffer[] {

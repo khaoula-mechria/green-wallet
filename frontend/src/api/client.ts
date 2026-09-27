@@ -19,6 +19,13 @@ export function clearSession(): void {
   localStorage.removeItem(HOUSEHOLD_KEY);
 }
 
+/** Random key for the `Idempotency-Key` header. crypto.randomUUID only exists
+ * in secure contexts (HTTPS/localhost); getRandomValues works everywhere. */
+export function newIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code: string) {
     super(message);
@@ -47,5 +54,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) => request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined }),
+  post: <T>(path: string, body?: unknown, headers?: Record<string, string>) =>
+    request<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined, headers }),
 };

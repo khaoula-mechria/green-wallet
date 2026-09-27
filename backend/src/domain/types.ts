@@ -62,12 +62,18 @@ export interface EnergyTrade {
   completedAt: number | null;
 }
 
-export type TokenTransactionType = "MINT" | "TRANSFER" | "TRADE_SETTLEMENT";
+// Amounts on these API-facing types are decimal kWh / TEC. They are stored and
+// computed as integers (Wh / µTEC, see domain/units.ts) and converted only at
+// the repository boundary.
+
+/** GRANT = TEC issued by policy (signup grant, seed data, opening balances);
+ * MINT = TEC issued against tokenized surplus energy. */
+export type TokenTransactionType = "GRANT" | "MINT" | "TRANSFER" | "TRADE_SETTLEMENT";
 
 export interface TokenTransaction {
   id: string;
   type: TokenTransactionType;
-  fromHouseholdId: string | null; // null = minted from treasury
+  fromHouseholdId: string | null; // null = issued (GRANT/MINT)
   toHouseholdId: string;
   amount: number; // TEC
   timestamp: number;
@@ -75,18 +81,26 @@ export interface TokenTransaction {
   relatedTradeId: string | null;
 }
 
-export type BlockchainTxType = "MINT" | "TRANSFER" | "TRADE";
+export type BlockchainTxType = "GRANT" | "MINT" | "TRANSFER" | "TRADE";
+
+/** External-anchoring state: `none` (local mode), `pending` (queued for the
+ * external chain), `anchored` (confirmed there), `failed` (gave up after
+ * retries — needs operator reconciliation). */
+export type AnchorStatus = "none" | "pending" | "anchored" | "failed";
 
 export interface BlockchainTransaction {
   id: string;
   type: BlockchainTxType;
   fromId: string | null;
   toId: string;
-  amount: number;
+  amount: number; // TEC
   timestamp: number;
   blockIndex: number | null;
   hederaTransactionId: string | null; // set only when running in Hedera mode
   payload: string; // JSON-encoded details for the explorer view
+  anchorStatus: AnchorStatus;
+  anchorAttempts: number;
+  anchorError: string | null;
 }
 
 export interface BlockchainBlock {
@@ -96,6 +110,9 @@ export interface BlockchainBlock {
   hash: string;
   nonce: number;
   transactionIds: string[];
+  /** 1 = legacy hash over transaction ids only; 2 = hash also commits to
+   * every transaction's contents. */
+  hashVersion: 1 | 2;
 }
 
 export interface AuthTokenPayload {

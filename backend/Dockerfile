@@ -11,7 +11,6 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/src/db/schema.sql ./dist/db/schema.sql
 
 RUN mkdir -p /app/data
 VOLUME ["/app/data"]

@@ -1,16 +1,33 @@
 import type { Database } from "better-sqlite3";
 import { v4 as uuid } from "uuid";
 import { HouseholdRepository } from "../db/repositories/householdRepository.js";
-import { TokenTransactionRepository } from "../db/repositories/tokenTransactionRepository.js";
+import { TokenTransactionRepository, tokenTxToDomain, type TokenTransactionRow } from "../db/repositories/tokenTransactionRepository.js";
+import { atomic } from "../db/transaction.js";
 import type { BlockchainService } from "../blockchain/BlockchainService.js";
-import type { TokenTransaction } from "../domain/types.js";
+import type { BlockchainTxType, TokenTransaction, TokenTransactionType } from "../domain/types.js";
+import { MICRO_PER_WH_MINTED, kwhToWh, microToTec, tecToMicro } from "../domain/units.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
+
+const LEDGER_TYPE: Record<TokenTransactionType, BlockchainTxType> = {
+  GRANT: "GRANT",
+  MINT: "MINT",
+  TRANSFER: "TRANSFER",
+  TRADE_SETTLEMENT: "TRADE",
+};
 
 /**
  * Owns every token-balance mutation in the system. Financial/token value
  * (TEC) is tracked here strictly separately from physical energy quantity
- * (kWh, owned by MeasurementService/HouseholdRepository.energyBalance) —
- * this service never interprets kWh, only TEC amounts it's told to move.
+ * (kWh) — except for MINT, which tokenizes surplus energy 1:1.
+ *
+ * Every mutation writes, in ONE database transaction: the balance change, the
+ * token_transactions record, and the ledger block. Debits are conditional
+ * SQL updates, so a balance can never be overdrawn — even by concurrent
+ * requests — and a crash can never leave a balance without its ledger record.
+ *
+ * The `*InTx` methods are the building blocks other services compose into
+ * larger atomic operations (a trade settles tokens and energy together); they
+ * must be called inside `atomic(...)`.
  */
 export class TokenService {
   private readonly households: HouseholdRepository;
@@ -21,41 +38,65 @@ export class TokenService {
     this.tokenTx = new TokenTransactionRepository(db);
   }
 
-  /** Mints TEC 1:1 against reported/tokenized energy (kWh) for a household. */
-  async mint(householdId: string, amountKwh: number): Promise<TokenTransaction> {
-    if (amountKwh <= 0) throw new ValidationError("mint amount must be positive");
-    const household = this.households.findById(householdId);
-    if (!household) throw new NotFoundError("Household");
+  // --- in-transaction building blocks (sync) --------------------------------
 
-    const txId = uuid();
-    const chainResult = await this.blockchain.recordTransaction({
-      id: txId,
-      type: "MINT",
-      fromId: null,
-      toId: householdId,
-      amount: amountKwh,
-      payload: { reason: "energy-surplus-tokenization" },
-    });
+  /** Issues new TEC (GRANT or MINT). For MINT, `energyWh` is the tokenized
+   * surplus credited to the household's sellable energy balance. */
+  issueInTx(type: "GRANT" | "MINT", householdId: string, amountMicro: number, payload: Record<string, unknown>, energyWh = 0): TokenTransaction {
+    if (!Number.isSafeInteger(amountMicro) || amountMicro <= 0) throw new ValidationError("issued amount must be positive");
+    if (!this.households.exists(householdId)) throw new NotFoundError("Household");
 
     const now = Date.now();
-    const record: TokenTransaction = {
-      id: txId,
-      type: "MINT",
-      fromHouseholdId: null,
-      toHouseholdId: householdId,
-      amount: amountKwh,
-      timestamp: now,
-      blockchainTxId: chainResult.blockchainTxId,
-      relatedTradeId: null,
-    };
+    const id = uuid();
+    const chain = this.blockchain.append({ id, type: LEDGER_TYPE[type], fromId: null, toId: householdId, amountMicro, payload });
+    this.households.creditTokens(householdId, amountMicro, now);
+    if (energyWh > 0) this.households.creditEnergy(householdId, energyWh, now);
+    return this.record({ id, type, fromHouseholdId: null, toHouseholdId: householdId, amountMicro, timestamp: now, blockchainTxId: chain.blockchainTxId, relatedTradeId: null });
+  }
 
-    const run = this.db.transaction(() => {
-      this.households.adjustBalances(householdId, amountKwh, amountKwh, now);
-      this.tokenTx.insert(record);
-    });
-    run();
+  transferInTx(
+    fromId: string,
+    toId: string,
+    amountMicro: number,
+    relatedTradeId: string | null,
+    type: "TRANSFER" | "TRADE_SETTLEMENT"
+  ): TokenTransaction {
+    if (!Number.isSafeInteger(amountMicro) || amountMicro <= 0) throw new ValidationError("transfer amount must be positive");
+    const sender = this.households.findById(fromId);
+    if (!sender) throw new NotFoundError("Sender household");
+    if (!this.households.exists(toId)) throw new NotFoundError("Receiver household");
+    if (fromId === toId) throw new ValidationError("cannot transfer to the same household");
 
-    return record;
+    const now = Date.now();
+    if (!this.households.debitTokens(fromId, amountMicro, now)) {
+      throw new ValidationError(
+        `insufficient token balance: has ${sender.tokenBalance.toFixed(2)} TEC, needs ${microToTec(amountMicro).toFixed(2)} TEC`
+      );
+    }
+    this.households.creditTokens(toId, amountMicro, now);
+
+    const id = uuid();
+    const chain = this.blockchain.append({ id, type: LEDGER_TYPE[type], fromId, toId, amountMicro, payload: { relatedTradeId } });
+    return this.record({ id, type, fromHouseholdId: fromId, toHouseholdId: toId, amountMicro, timestamp: now, blockchainTxId: chain.blockchainTxId, relatedTradeId });
+  }
+
+  private record(row: TokenTransactionRow): TokenTransaction {
+    this.tokenTx.insert(row);
+    return tokenTxToDomain(row);
+  }
+
+  // --- public API (decimal TEC / kWh) ----------------------------------------
+
+  /** Issues TEC by policy (signup grant, seed data). */
+  async grant(householdId: string, amountTec: number, reason: string): Promise<TokenTransaction> {
+    return atomic(this.db, () => this.issueInTx("GRANT", householdId, tecToMicro(amountTec), { reason }));
+  }
+
+  /** Mints TEC 1:1 against tokenized energy (kWh) and credits that energy as sellable. */
+  async mint(householdId: string, amountKwh: number): Promise<TokenTransaction> {
+    const wh = kwhToWh(amountKwh);
+    if (wh <= 0) throw new ValidationError("mint amount must be positive");
+    return atomic(this.db, () => this.issueInTx("MINT", householdId, wh * MICRO_PER_WH_MINTED, { reason: "energy-surplus-tokenization" }, wh));
   }
 
   /** Atomic TEC transfer between two households (does not move energy kWh). */
@@ -66,47 +107,9 @@ export class TokenService {
     relatedTradeId: string | null = null,
     type: "TRANSFER" | "TRADE_SETTLEMENT" = "TRANSFER"
   ): Promise<TokenTransaction> {
-    if (amount <= 0) throw new ValidationError("transfer amount must be positive");
-    const sender = this.households.findById(fromId);
-    const receiver = this.households.findById(toId);
-    if (!sender) throw new NotFoundError("Sender household");
-    if (!receiver) throw new NotFoundError("Receiver household");
-    if (sender.tokenBalance < amount) {
-      throw new ValidationError(
-        `insufficient token balance: has ${sender.tokenBalance.toFixed(2)} TEC, needs ${amount.toFixed(2)} TEC`
-      );
-    }
-
-    const txId = uuid();
-    const chainResult = await this.blockchain.recordTransaction({
-      id: txId,
-      type: type === "TRADE_SETTLEMENT" ? "TRADE" : "TRANSFER",
-      fromId,
-      toId,
-      amount,
-      payload: { relatedTradeId },
-    });
-
-    const now = Date.now();
-    const record: TokenTransaction = {
-      id: txId,
-      type,
-      fromHouseholdId: fromId,
-      toHouseholdId: toId,
-      amount,
-      timestamp: now,
-      blockchainTxId: chainResult.blockchainTxId,
-      relatedTradeId,
-    };
-
-    const run = this.db.transaction(() => {
-      this.households.adjustBalances(fromId, 0, -amount, now);
-      this.households.adjustBalances(toId, 0, amount, now);
-      this.tokenTx.insert(record);
-    });
-    run();
-
-    return record;
+    const micro = tecToMicro(amount);
+    if (micro <= 0) throw new ValidationError("transfer amount must be positive");
+    return atomic(this.db, () => this.transferInTx(fromId, toId, micro, relatedTradeId, type));
   }
 
   getBalance(householdId: string): number {
@@ -116,7 +119,7 @@ export class TokenService {
   }
 
   getHistory(householdId: string): TokenTransaction[] {
-    if (!this.households.findById(householdId)) throw new NotFoundError("Household");
+    if (!this.households.exists(householdId)) throw new NotFoundError("Household");
     return this.tokenTx.findByHousehold(householdId);
   }
 

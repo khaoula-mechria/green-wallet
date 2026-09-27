@@ -7,6 +7,9 @@ import type { Household, HouseholdType, PublicHousehold, AuthTokenPayload } from
 import { env } from "../config/env.js";
 import { ValidationError, UnauthorizedError, ConflictError } from "../utils/errors.js";
 import type { BlockchainService } from "../blockchain/BlockchainService.js";
+import { atomic } from "../db/transaction.js";
+import { tecToMicro } from "../domain/units.js";
+import type { TokenService } from "./tokenService.js";
 
 export interface RegisterInput {
   id?: string;
@@ -28,7 +31,11 @@ export function toPublicHousehold(h: Household): PublicHousehold {
 export class AuthService {
   private readonly households: HouseholdRepository;
 
-  constructor(db: Database, private readonly blockchain: BlockchainService) {
+  constructor(
+    private readonly db: Database,
+    private readonly blockchain: BlockchainService,
+    private readonly tokens: TokenService
+  ) {
     this.households = new HouseholdRepository(db);
   }
 
@@ -48,32 +55,33 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(input.password, 10);
     const now = Date.now();
+    const grantMicro = tecToMicro(input.initialTokenBalance ?? 0, "initialTokenBalance");
+    if (grantMicro < 0) throw new ValidationError("initialTokenBalance must be >= 0");
 
-    const household: Household = {
-      id,
-      name: input.name,
-      type: input.type,
-      location: input.location ?? "Unknown",
-      passwordHash,
-      hederaAccountId: null,
-      hederaPrivateKeyEncrypted: null,
-      energyType: input.energyType ?? (input.type === "consumer" ? "grid" : "solar"),
-      currentProduction: 0,
-      currentConsumption: 0,
-      energyBalance: 0,
-      tokenBalance: input.initialTokenBalance ?? 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.households.insert(household);
+    // The household and its starting grant commit together; the grant is a
+    // ledger-recorded GRANT, so every balance is backed by its history.
+    atomic(this.db, () => {
+      if (this.households.exists(id)) throw new ConflictError(`household '${id}' already exists`);
+      this.households.insert({
+        id,
+        name: input.name,
+        type: input.type,
+        location: input.location ?? "Unknown",
+        passwordHash,
+        hederaAccountId: null,
+        hederaPrivateKeyEncrypted: null,
+        energyType: input.energyType ?? (input.type === "consumer" ? "grid" : "solar"),
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (grantMicro > 0) this.tokens.issueInTx("GRANT", id, grantMicro, { reason: "initial-balance" });
+    });
 
     // Best-effort ledger provisioning (only does real work in Hedera mode).
     try {
       const provisioned = await this.blockchain.provisionAccount(id);
       if (provisioned.accountId && provisioned.encryptedPrivateKey) {
         this.households.setHederaAccount(id, provisioned.accountId, provisioned.encryptedPrivateKey);
-        household.hederaAccountId = provisioned.accountId;
       }
     } catch (err) {
       // Provisioning failure must not block registration in an MVP; the
@@ -81,6 +89,7 @@ export class AuthService {
       console.error(`[auth] Hedera provisioning failed for ${id}:`, (err as Error).message);
     }
 
+    const household = this.households.findById(id)!;
     const token = this.issueToken(household);
     return { household: toPublicHousehold(household), token };
   }

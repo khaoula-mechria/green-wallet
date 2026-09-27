@@ -55,7 +55,7 @@ export interface EnergyTrade {
 
 export interface TokenTransaction {
   id: string;
-  type: "MINT" | "TRANSFER" | "TRADE_SETTLEMENT";
+  type: "GRANT" | "MINT" | "TRANSFER" | "TRADE_SETTLEMENT";
   fromHouseholdId: string | null;
   toHouseholdId: string;
   amount: number;
@@ -71,11 +71,14 @@ export interface BlockchainBlock {
   hash: string;
   nonce: number;
   transactionIds: string[];
+  hashVersion: 1 | 2;
 }
+
+export type AnchorStatus = "none" | "pending" | "anchored" | "failed";
 
 export interface BlockchainTransaction {
   id: string;
-  type: "MINT" | "TRANSFER" | "TRADE";
+  type: "GRANT" | "MINT" | "TRANSFER" | "TRADE";
   fromId: string | null;
   toId: string;
   amount: number;
@@ -83,6 +86,9 @@ export interface BlockchainTransaction {
   blockIndex: number | null;
   hederaTransactionId: string | null;
   payload: string;
+  anchorStatus: AnchorStatus;
+  anchorAttempts: number;
+  anchorError: string | null;
 }
 
 export interface DashboardSummary {
@@ -97,7 +103,12 @@ export interface DashboardSummary {
   completedTrades: number;
   tokenCirculation: number;
   recentTrades: EnergyTrade[];
-  blockchain: { mode: "local" | "hedera"; blocksCount: number; details: Record<string, unknown> };
+  blockchain: {
+    mode: "local" | "hedera";
+    blocksCount: number;
+    anchoring: Record<AnchorStatus, number>;
+    details: Record<string, unknown>;
+  };
 }
 
 export interface MicrogridNode {

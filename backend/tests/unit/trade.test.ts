@@ -14,7 +14,7 @@ describe("TradeService — purchasing energy", () => {
     const { producer, offer } = await setupOffer(c, 3, 0.2);
     const buyer = await seedHousehold(c, { type: "consumer", initialTokenBalance: 10 });
 
-    const trade = await c.trades.purchase(buyer.id, offer.id, 3);
+    const { trade } = await c.trades.purchase(buyer.id, offer.id, 3);
 
     expect(trade.status).toBe("completed");
     expect(trade.totalPrice).toBeCloseTo(0.6);

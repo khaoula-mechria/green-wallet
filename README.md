@@ -47,9 +47,14 @@ wrapped in DB transactions; plaintext private keys → encrypted at rest; etc).
   preconditions are checked and enforced atomically in `TradeService`, with a documented
   swap-in point for a real Hedera Smart Contract later.
 - **Dashboard, blockchain explorer, microgrid view** — live, polling UI with charts.
-- **Tests** — 48 tests across surplus/deficit calc, offers, trades, token transfers,
-  blockchain hashing/validation, double-spend/duplicate-execution prevention, and API
-  security (authorization, input validation, authenticated WebSocket, config checks).
+- **Ledger integrity** — every money movement commits atomically with its ledger block;
+  balances are exact integers (Wh / µTEC) that the database refuses to let go negative;
+  purchases are idempotent; block hashes commit to transaction contents; `npm run
+  ledger:check` verifies the chain and reconciles every balance against its history.
+- **Tests** — 70 tests across surplus/deficit calc, offers, trades, token transfers,
+  blockchain hashing/validation, double-spend/duplicate-execution prevention, API
+  security, and ledger integrity (atomic rollback, overdraft, idempotency, tampering,
+  migrations).
 
 ## Architecture
 
@@ -86,7 +91,7 @@ for why Hedera is opt-in rather than mandatory.
 backend/
   src/
     domain/          shared TypeScript types
-    db/               schema.sql, database.ts, repositories/*
+    db/               migrations.ts (schema source of truth), database.ts, repositories/*
     blockchain/       BlockchainService interface + Local/Hedera implementations
     services/         application logic (one file per bounded concern)
     simulation/        solar/consumption curves + the ticking SimulationService
@@ -191,14 +196,28 @@ cd backend
 npm test
 ```
 
-30 tests covering: surplus/deficit calculation, offer creation (incl. insufficient
+32 core tests covering: surplus/deficit calculation, offer creation (incl. insufficient
 surplus), trade purchase end-to-end, insufficient token balance, insufficient offer
 energy, trade completion, block creation/hashing, block hash validation, tampered-block
 detection, and duplicate-execution/double-spend prevention (both on offer capacity and
 on trade settlement) — plus 18 security tests (`tests/integration/security.test.ts`):
 client-chosen balances rejected, meter-reading caps and rate limits, owner-only access
 to wallets/trades/meter history, WebSocket authentication, and production config
-validation.
+validation — plus 20 ledger tests (`tests/integration/ledger.test.ts`): no overdraft
+under concurrent purchases, full rollback when the ledger write fails mid-purchase,
+exact integer arithmetic over many small trades, idempotent replays, detection of
+amounts edited in the ledger table, the stale-trade sweeper, and migrating a legacy
+float database.
+
+### Ledger check
+
+```bash
+cd backend
+npm run ledger:check   # verifies the hash chain + reconciles balances; exit 1 on problems
+```
+
+The same check runs at every server boot and logs any problem. Schema changes live in
+`src/db/migrations.ts` and apply automatically on boot.
 
 ## Docker
 

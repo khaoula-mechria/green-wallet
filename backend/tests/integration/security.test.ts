@@ -110,7 +110,7 @@ describe("Phase 0 — private data is owner-only", () => {
     eveToken = await register(app, "eve", "consumer");
     await container.measurements.record("alice", 8, 3);
     const offer = container.marketplace.createOffer("alice", 3, 0.2);
-    tradeId = (await container.trades.purchase("bob", offer.id, 2)).id;
+    tradeId = (await container.trades.purchase("bob", offer.id, 2)).trade.id;
   });
 
   const get = (path: string, token?: string) => {

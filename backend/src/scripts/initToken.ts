@@ -29,8 +29,9 @@ async function main() {
       .setTokenName("Tunisian Energy Coin")
       .setTokenSymbol("TEC")
       .setTokenType(TokenType.FungibleCommon)
-      .setDecimals(2)
-      .setInitialSupply(1_000_000) // 10,000.00 TEC in the treasury account
+      // 6 decimals: on-chain smallest units == the app's µTEC (domain/units.ts).
+      .setDecimals(6)
+      .setInitialSupply(0) // all TEC is issued by the app (GRANT/MINT), then anchored
       .setTreasuryAccountId(operatorId)
       .setSupplyType(TokenSupplyType.Infinite)
       .setSupplyKey(operatorKey)

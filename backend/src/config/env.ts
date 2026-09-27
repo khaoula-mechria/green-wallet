@@ -54,6 +54,12 @@ export const env = {
   // Clients can never choose their own starting balance.
   signupGrantTec: num(process.env.SIGNUP_GRANT_TEC, isProduction ? 0 : 20),
 
+  // Ledger maintenance loop: retries external anchoring (Hedera) and releases
+  // offer capacity held by trades stuck in `pending`.
+  ledgerMaintenanceIntervalMs: num(process.env.LEDGER_MAINTENANCE_INTERVAL_MS, 5_000),
+  ledgerAnchorMaxAttempts: num(process.env.LEDGER_ANCHOR_MAX_ATTEMPTS, 10),
+  pendingTradeTimeoutMs: num(process.env.PENDING_TRADE_TIMEOUT_MS, 5 * 60_000),
+
   // Blockchain mode selection. Hedera mode only activates when ALL three are set,
   // mirroring the reference system's "if TEC_TOKEN_ID set" gating pattern.
   hederaOperatorId: process.env.HEDERA_OPERATOR_ID ?? "",
@@ -82,6 +88,9 @@ export function validateEnv(e: Env = env): string[] {
     ["MEASUREMENT_MAX_KWH", e.measurementMaxKwh],
     ["MEASUREMENT_MIN_INTERVAL_MS", e.measurementMinIntervalMs],
     ["SIGNUP_GRANT_TEC", e.signupGrantTec],
+    ["LEDGER_MAINTENANCE_INTERVAL_MS", e.ledgerMaintenanceIntervalMs],
+    ["LEDGER_ANCHOR_MAX_ATTEMPTS", e.ledgerAnchorMaxAttempts],
+    ["PENDING_TRADE_TIMEOUT_MS", e.pendingTradeTimeoutMs],
   ] as const) {
     if (!Number.isFinite(value) || value < 0) problems.push(`${name} must be a non-negative number`);
   }

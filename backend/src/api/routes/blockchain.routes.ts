@@ -15,6 +15,15 @@ export function blockchainRoutes(c: Container): Router {
     })
   );
 
+  // Anyone can re-check the ledger's integrity: every block hash is recomputed
+  // from its transactions' contents and every chain link is checked.
+  router.get(
+    "/verify",
+    asyncRoute(async (_req, res) => {
+      res.json({ success: true, data: c.blockchain.verifyChain() });
+    })
+  );
+
   router.get(
     "/blocks",
     asyncRoute(async (req, res) => {
