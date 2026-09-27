@@ -1,0 +1,37 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DB_PATH: /app/data/green-wallet.db
+      CORS_ORIGIN: "*"
+      JWT_SECRET: ${JWT_SECRET:-dev-insecure-secret-change-me}
+      KEY_ENCRYPTION_SECRET: ${KEY_ENCRYPTION_SECRET:-dev-insecure-key-encryption-secret}
+      SIMULATION_ENABLED: "true"
+      SIMULATION_TICK_MS: 5000
+      SIMULATION_MINUTES_PER_TICK: 30
+      # Leave blank (default) for local/simulated blockchain mode. See .env.example.
+      HEDERA_OPERATOR_ID: ${HEDERA_OPERATOR_ID:-}
+      HEDERA_OPERATOR_KEY: ${HEDERA_OPERATOR_KEY:-}
+      HEDERA_TOKEN_ID: ${HEDERA_TOKEN_ID:-}
+    volumes:
+      - green-wallet-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  green-wallet-data:
