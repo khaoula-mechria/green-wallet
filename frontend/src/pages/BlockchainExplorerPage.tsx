@@ -2,25 +2,18 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { StatCard } from "../components/StatCard";
-import type { BlockchainBlock, BlockchainTransaction } from "../types";
-
-interface Status {
-  mode: "local" | "hedera";
-  blocksCount: number;
-  details: Record<string, unknown>;
-}
+import { AssetBadge, TxTypeBadge } from "../components/Badge";
+import { fmtSimTime } from "../format";
+import type { BlockDetail, BlockchainBlock, LedgerStatus } from "../types";
 
 export function BlockchainExplorerPage() {
-  const { data: status } = usePolling(() => api.get<Status>("/blockchain/status"), 5000);
-  const { data: blocks, loading } = usePolling(() => api.get<BlockchainBlock[]>("/blockchain/blocks"), 5000);
+  const { data: status } = usePolling(() => api.get<LedgerStatus>("/blockchain/status"), 2500);
+  const { data: blocks, loading } = usePolling(() => api.get<BlockchainBlock[]>("/blockchain/blocks?limit=100"), 2500);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const { data: blockDetail } = usePolling(
-    () =>
-      selectedIndex === null
-        ? Promise.resolve(null)
-        : api.get<BlockchainBlock & { transactions: BlockchainTransaction[] }>(`/blockchain/blocks/${selectedIndex}`),
-    6000,
+    () => (selectedIndex === null ? Promise.resolve(null) : api.get<BlockDetail>(`/blockchain/blocks/${selectedIndex}`)),
+    5000,
     [selectedIndex]
   );
 
@@ -31,43 +24,56 @@ export function BlockchainExplorerPage() {
       <div className="page-header">
         <div>
           <h1>Blockchain Explorer</h1>
-          <p>Immutable, hash-chained record of every token mint, transfer and trade settlement.</p>
+          <p>
+            Hash-chained record of every TEC payment, green certificate and auction result. Hedera-style IDs, simulated
+            network — every fee is paid by the operator.
+          </p>
         </div>
       </div>
 
       <div className="stat-grid">
-        <StatCard label="Ledger mode" value={status?.mode === "hedera" ? "Hedera testnet" : "Local (simulated)"} />
-        <StatCard label="Blocks mined" value={String(status?.blocksCount ?? "—")} />
-        <StatCard label="Latest hash" value={String((status?.details.latestHash as string | undefined)?.slice(0, 14) ?? "—") + "…"} />
+        <StatCard label="Ledger" value={status?.mode === "hedera" ? "Hedera testnet" : "Simulated Hedera"} sub={status?.network} />
+        <StatCard label="Operator (fee payer)" value={status?.operatorAccountId ?? "—"} sub={`fees paid: ${(status?.totalFeesHbar ?? 0).toFixed(4)} ℏ`} />
+        <StatCard
+          label="Token IDs"
+          value={status?.tokenIds.TEC ?? "—"}
+          sub={status ? `TEC · SOLAR ${status.tokenIds.SOLAR} · WIND ${status.tokenIds.WIND}` : undefined}
+        />
+        <StatCard label="Blocks" value={String(status?.blocksCount ?? "—")} sub={`${status?.transactionsCount ?? 0} transactions kept`} />
       </div>
 
       <div className="grid-2">
         <div className="card">
-          <div className="section-title">Blocks</div>
+          <div className="section-title">Blocks (one per market interval)</div>
           {loading && !blocks ? (
             <div className="empty-state">Loading…</div>
           ) : (
-            <div style={{ maxHeight: 420, overflowY: "auto" }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Hash</th>
-                  <th>Txs</th>
-                  <th>Mined</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reversedBlocks.map((b) => (
-                  <tr key={b.index} onClick={() => setSelectedIndex(b.index)} style={{ cursor: "pointer", background: selectedIndex === b.index ? "var(--color-primary-soft)" : undefined }}>
-                    <td>{b.index}</td>
-                    <td className="mono">{b.hash.slice(0, 16)}…</td>
-                    <td>{b.transactionIds.length}</td>
-                    <td>{new Date(b.timestamp).toLocaleTimeString()}</td>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Hash</th>
+                    <th>Txs</th>
+                    <th>Interval</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {reversedBlocks.map((b) => (
+                    <tr
+                      key={b.index}
+                      onClick={() => setSelectedIndex(b.index)}
+                      style={{ cursor: "pointer" }}
+                      className={selectedIndex === b.index ? "row-highlight" : undefined}
+                    >
+                      <td>{b.index}</td>
+                      <td className="mono">{b.hash.slice(0, 16)}…</td>
+                      <td>{b.transactionIds.length}</td>
+                      <td className="muted">{fmtSimTime(b.simTime)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -82,29 +88,29 @@ export function BlockchainExplorerPage() {
               <DetailRow label="Hash" value={blockDetail.hash} mono />
               <DetailRow label="Previous hash" value={blockDetail.previousHash} mono />
               <DetailRow label="Nonce" value={String(blockDetail.nonce)} />
-              <DetailRow label="Mined at" value={new Date(blockDetail.timestamp).toLocaleString()} />
-              <div style={{ marginTop: 12 }}>
+              <DetailRow label="Simulated time" value={fmtSimTime(blockDetail.simTime)} />
+              <div style={{ marginTop: 12 }} className="table-scroll">
                 <div className="label" style={{ marginBottom: 8 }}>
-                  Transactions
+                  Transactions ({blockDetail.transactions.length})
                 </div>
-                {blockDetail.transactions.length === 0 ? (
-                  <div className="empty-state">Genesis block — no transactions.</div>
-                ) : (
-                  blockDetail.transactions.map((tx) => (
-                    <div key={tx.id} className="card" style={{ marginBottom: 8, boxShadow: "none" }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{tx.type}</div>
-                      <div className="mono" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-                        {(tx.fromId ?? "treasury")} → {tx.toId}
-                      </div>
-                      <div style={{ fontSize: 13, marginTop: 4 }}>{tx.amount.toFixed(2)} TEC</div>
-                      {tx.hederaTransactionId && (
-                        <div className="mono" style={{ fontSize: 11, color: "var(--color-blue)", marginTop: 4 }}>
-                          Hedera: {tx.hederaTransactionId}
-                        </div>
-                      )}
+                {blockDetail.transactions.map((tx) => (
+                  <div key={tx.id} className="card" style={{ marginBottom: 8, boxShadow: "none", padding: "10px 12px" }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <TxTypeBadge type={tx.type} asset={tx.asset} />
+                      <AssetBadge asset={tx.asset} />
                     </div>
-                  ))
-                )}
+                    <div style={{ fontSize: 12.5, marginTop: 6 }}>
+                      {tx.fromLabel} → {tx.toLabel}: <strong>{tx.amount.toFixed(tx.asset === "TEC" ? 2 : 3)}</strong>
+                      {tx.asset === "TEC" ? " TEC" : " kWh"}
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {tx.memo}
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--color-blue)", marginTop: 4 }}>
+                      {tx.id} · fee {tx.feeHbar} ℏ (operator)
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

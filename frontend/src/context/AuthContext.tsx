@@ -1,19 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, getStoredHouseholdId, setSession, clearSession, getToken } from "../api/client";
-import type { Household, HouseholdType } from "../types";
+import type { Household, RegisterInput } from "../types";
 
 interface AuthState {
   household: Household | null;
   loading: boolean;
   login: (id: string, password: string) => Promise<void>;
-  register: (input: {
-    id?: string;
-    name: string;
-    type: HouseholdType;
-    location: string;
-    password: string;
-    energyType?: string;
-  }) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
   logout: () => void;
   refresh: () => Promise<void>;
 }
@@ -45,6 +38,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Battery, storage and balances change every market interval.
+  useEffect(() => {
+    if (!household) return;
+    const id = setInterval(() => void refresh(), 3000);
+    return () => clearInterval(id);
+  }, [household?.id, refresh]);
 
   const login = useCallback(async (id: string, password: string) => {
     const result = await api.post<{ household: Household; token: string }>("/auth/login", { id, password });

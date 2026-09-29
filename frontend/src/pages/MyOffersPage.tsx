@@ -3,19 +3,12 @@ import { api, ApiError } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/Badge";
+import { fmtSimTime } from "../format";
 import type { EnergyOffer } from "../types";
 
 export function MyOffersPage() {
   const { household, refresh } = useAuth();
-  const { data, loading, reload } = usePolling(
-    () => api.get<EnergyOffer[]>("/market/offers").then((offers) => offers.filter((o) => o.sellerId === household!.id)),
-    4000,
-    [household?.id]
-  );
-
-  // Active offers already come back from /market/offers; completed/cancelled ones
-  // won't (that endpoint only returns active listings), so we also fetch the
-  // household's full offer history via trades for a complete picture below.
+  const { data, loading, reload } = usePolling(() => api.get<EnergyOffer[]>("/market/offers/mine"), 2500, [household?.id]);
   const [error, setError] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
@@ -38,7 +31,10 @@ export function MyOffersPage() {
       <div className="page-header">
         <div>
           <h1>My Offers</h1>
-          <p>Offers you've listed on the marketplace.</p>
+          <p>
+            Listed kWh stay reserved in your battery / storage. An offer shrinks if your own deficit uses that energy or if
+            stored energy decays.
+          </p>
         </div>
       </div>
 
@@ -47,7 +43,7 @@ export function MyOffersPage() {
         {loading && !data ? (
           <div className="empty-state">Loading…</div>
         ) : !data || data.length === 0 ? (
-          <div className="empty-state">You have no active offers. List your surplus from the Marketplace page.</div>
+          <div className="empty-state">You have no offers. List energy you own from the Marketplace page.</div>
         ) : (
           <table>
             <thead>
@@ -55,6 +51,7 @@ export function MyOffersPage() {
                 <th>Offered</th>
                 <th>Remaining</th>
                 <th>Price (TEC/kWh)</th>
+                <th>Expires</th>
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -64,7 +61,8 @@ export function MyOffersPage() {
                 <tr key={o.id}>
                   <td>{o.amountKwh.toFixed(2)} kWh</td>
                   <td>{o.amountRemainingKwh.toFixed(2)} kWh</td>
-                  <td>{o.pricePerKwh.toFixed(2)}</td>
+                  <td>{o.pricePerKwh.toFixed(3)}</td>
+                  <td className="muted">{fmtSimTime(o.expiresAtSimTime)}</td>
                   <td>
                     <StatusBadge status={o.status} />
                   </td>

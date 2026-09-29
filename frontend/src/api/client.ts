@@ -31,8 +31,19 @@ interface ApiEnvelope<T> {
   error?: { code: string; message: string };
 }
 
+/** "mock" (default) runs the whole design in the browser (src/mock) until the
+ * backend implements it; "real" calls the backend through the Vite proxy. */
+export const API_MODE: "mock" | "real" = import.meta.env.VITE_API_MODE === "real" ? "real" : "mock";
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
+
+  if (API_MODE === "mock") {
+    const { handleMockRequest } = await import("../mock/handlers");
+    const body = typeof options.body === "string" ? JSON.parse(options.body) : undefined;
+    return handleMockRequest<T>(options.method ?? "GET", path, body, token);
+  }
+
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(options.headers as Record<string, string>) };
   if (token) headers.Authorization = `Bearer ${token}`;
 

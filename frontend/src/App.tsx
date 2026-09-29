@@ -12,6 +12,8 @@ import { WalletPage } from "./pages/WalletPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { BlockchainExplorerPage } from "./pages/BlockchainExplorerPage";
 import { MicrogridPage } from "./pages/MicrogridPage";
+import { AuctionPage } from "./pages/AuctionPage";
+import { BatterySettingsPage } from "./pages/BatterySettingsPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { household, loading } = useAuth();
@@ -33,9 +35,11 @@ export default function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/households" element={<HouseholdsPage />} />
                 <Route path="/energy" element={<EnergyMonitoringPage />} />
+                <Route path="/auction" element={<AuctionPage />} />
                 <Route path="/market" element={<MarketplacePage />} />
                 <Route path="/my-offers" element={<MyOffersPage />} />
-                <Route path="/my-purchases" element={<MyPurchasesPage />} />
+                <Route path="/my-trades" element={<MyPurchasesPage />} />
+                <Route path="/battery" element={<BatterySettingsPage />} />
                 <Route path="/wallet" element={<WalletPage />} />
                 <Route path="/transactions" element={<TransactionsPage />} />
                 <Route path="/blockchain" element={<BlockchainExplorerPage />} />

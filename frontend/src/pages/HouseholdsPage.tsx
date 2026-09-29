@@ -1,17 +1,22 @@
 import { api } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
+import { useAuth } from "../context/AuthContext";
 import { TypeBadge } from "../components/Badge";
+import { Gauge } from "../components/Gauge";
 import type { Household } from "../types";
 
+const SOURCE_ICON = { solar: "☀ solar", wind: "🌬 wind", grid: "— grid" };
+
 export function HouseholdsPage() {
-  const { data, loading } = usePolling(() => api.get<Household[]>("/households"), 5000);
+  const { household: me } = useAuth();
+  const { data, loading } = usePolling(() => api.get<Household[]>("/households"), 2500);
 
   return (
     <div>
       <div className="page-header">
         <div>
           <h1>Households</h1>
-          <p>All registered households and their live energy/token position.</p>
+          <p>Every participant: producers (large plants), prosumers (homes that generate) and consumers.</p>
         </div>
       </div>
 
@@ -22,38 +27,53 @@ export function HouseholdsPage() {
           <table>
             <thead>
               <tr>
-                <th>Household</th>
+                <th>Participant</th>
                 <th>Type</th>
-                <th>Location</th>
-                <th>Production (kWh)</th>
-                <th>Consumption (kWh)</th>
+                <th>Source</th>
+                <th>Production</th>
+                <th>Consumption</th>
                 <th>Net</th>
-                <th>Sellable balance (kWh)</th>
-                <th>TEC balance</th>
+                <th style={{ width: 150 }}>Battery</th>
+                <th>Stored</th>
+                <th>Mode</th>
+                <th>TEC</th>
               </tr>
             </thead>
             <tbody>
               {data?.map((h) => {
                 const net = h.currentProduction - h.currentConsumption;
                 return (
-                  <tr key={h.id}>
+                  <tr key={h.id} className={h.id === me?.id ? "row-highlight" : undefined}>
                     <td>
                       <div style={{ fontWeight: 600 }}>{h.name}</div>
-                      <div className="mono" style={{ color: "var(--color-text-muted)" }}>
-                        {h.id}
+                      <div className="mono muted">
+                        {h.id} · {h.accountId}
                       </div>
                     </td>
                     <td>
                       <TypeBadge type={h.type} />
                     </td>
-                    <td>{h.location}</td>
+                    <td>{SOURCE_ICON[h.energyType]}</td>
                     <td>{h.currentProduction.toFixed(2)}</td>
                     <td>{h.currentConsumption.toFixed(2)}</td>
-                    <td style={{ color: net >= 0 ? "var(--color-primary-dark)" : "var(--color-danger)", fontWeight: 600 }}>
+                    <td className={net >= 0 ? "pos" : "neg"}>
                       {net >= 0 ? "+" : ""}
                       {net.toFixed(2)}
                     </td>
-                    <td>{h.energyBalance.toFixed(2)}</td>
+                    <td>
+                      {h.batteryCapacityKwh > 0 ? (
+                        <>
+                          <Gauge value={h.batteryChargeKwh} max={h.batteryCapacityKwh} compact />
+                          <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+                            {h.batteryChargeKwh.toFixed(1)} / {h.batteryCapacityKwh} kWh
+                          </div>
+                        </>
+                      ) : (
+                        <span className="muted">{h.type === "prosumer" ? "no battery" : "—"}</span>
+                      )}
+                    </td>
+                    <td>{h.storedKwh > 0 ? `${h.storedKwh.toFixed(2)} kWh` : <span className="muted">—</span>}</td>
+                    <td>{h.type === "prosumer" ? h.settings.overflowMode : <span className="muted">—</span>}</td>
                     <td>{h.tokenBalance.toFixed(2)}</td>
                   </tr>
                 );

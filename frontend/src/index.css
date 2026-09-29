@@ -407,3 +407,256 @@ select.input {
   height: 100vh;
   color: var(--color-text-muted);
 }
+
+/* ---- energy-market design additions ------------------------------------ */
+
+.nav-section {
+  margin-bottom: 10px;
+}
+
+.nav-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 6px 12px 4px;
+  font-weight: 700;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+  min-height: 44px;
+  padding: 8px 16px;
+  margin: -8px 0 20px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.topbar-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.badge-mock {
+  margin-left: auto;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.badge-operator {
+  background: var(--color-blue-soft);
+  color: var(--color-blue);
+}
+
+.badge-expired {
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+}
+
+.badge-tx-tec {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-dark);
+  text-transform: none;
+}
+
+.badge-tx-cert {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  text-transform: none;
+}
+
+.badge-tx-record {
+  background: var(--color-blue-soft);
+  color: var(--color-blue);
+  text-transform: none;
+}
+
+.badge-asset-tec {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-dark);
+  text-transform: none;
+}
+.badge-asset-solar {
+  background: #fff7d6;
+  color: #946200;
+  text-transform: none;
+}
+.badge-asset-wind {
+  background: #e3f4f7;
+  color: #0e7490;
+  text-transform: none;
+}
+.badge-asset-record {
+  background: var(--color-blue-soft);
+  color: var(--color-blue);
+  text-transform: none;
+}
+
+.gauge {
+  margin-bottom: 12px;
+}
+
+.gauge-compact {
+  margin-bottom: 0;
+}
+
+.gauge-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.gauge-track {
+  height: 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.gauge-compact .gauge-track {
+  height: 6px;
+}
+
+.gauge-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.kv-list > div {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+}
+
+.kv-list > div:last-child {
+  border-bottom: none;
+}
+
+.kv-list span {
+  color: var(--color-text-muted);
+}
+
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 8px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 13px;
+}
+
+.check-row:last-child {
+  border-bottom: none;
+}
+
+.check-ok {
+  color: var(--color-primary-dark);
+  font-weight: 700;
+}
+
+.check-fail {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+.row-highlight td {
+  background: var(--color-primary-soft);
+}
+
+.pos {
+  color: var(--color-primary-dark);
+  font-weight: 600;
+}
+
+.neg {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--color-text-muted);
+}
+
+.formula {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 12.5px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  line-height: 1.7;
+}
+
+.steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  margin-bottom: 12px;
+}
+
+.demo-accounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.demo-accounts button {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.table-scroll {
+  max-height: 460px;
+  overflow-y: auto;
+}

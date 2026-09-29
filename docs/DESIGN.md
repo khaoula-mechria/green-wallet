@@ -213,6 +213,38 @@ type** but not the exact producer; the issue record keeps the origin.
 - Inside the band the price comes **only from the auction** ([§4](#4-auction-mechanics)).
 - Manual marketplace prices must also lie inside the band ([§8](#8-manual-marketplace-next-to-the-auction)).
 
+### 3.1 Where the floor and ceiling come from
+
+The floor and ceiling are **not computed by the market** — they are the
+utility's own prices. Real utilities build them from cost components, and we
+do the same so every number can be explained:
+
+```
+ceiling (import) = wholesale energy price + network fee + taxes & levies + supplier margin
+floor   (export) = wholesale energy price − utility balancing cost
+middle of band   = (floor + ceiling) / 2
+```
+
+| Component | Meaning | Default *(config)* |
+|---|---|---|
+| Wholesale energy price | what the utility pays for energy on the national market | 0.08 |
+| Network fee | cost of carrying energy over the national grid | 0.09 |
+| Taxes & levies | government charges on retail electricity | 0.08 |
+| Supplier margin | the utility's retail margin | 0.05 |
+| Balancing cost | what the utility keeps for absorbing unpredictable exports | 0.03 |
+
+With the defaults: **ceiling = 0.08 + 0.09 + 0.08 + 0.05 = 0.30**,
+**floor = 0.08 − 0.03 = 0.05**, **middle = 0.175** (TEC/kWh).
+
+- Real-world basis: a retail bill is roughly one third energy, one third
+  network, one third taxes (varies by country); exports are paid about the
+  wholesale value minus the utility's costs (net billing), or a regulated
+  feed-in tariff.
+- Validation at boot: every component ≥ 0 and **floor < ceiling**, otherwise
+  the app refuses to start.
+- Fixed for the whole simulation. *Future work:* a daily wholesale curve
+  (time-of-use), which would make the band itself move by hour.
+
 ---
 
 ## 4. Auction mechanics
@@ -582,8 +614,13 @@ Indicative names; final names are fixed during implementation.
 |---|---|---|
 | `MARKET_INTERVAL_MS` | 5000 | [§0.6](#06-time-one-simulated-clock) |
 | `MARKET_INTERVAL_SIM_MINUTES` | 30 | [§0.6](#06-time-one-simulated-clock) |
-| `PRICE_FLOOR_TEC` (export) | 0.05 | [§3](#3-price-principle--the-band) |
-| `PRICE_CEILING_TEC` (import) | 0.30 | [§3](#3-price-principle--the-band) |
+| `WHOLESALE_PRICE_TEC` | 0.08 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
+| `NETWORK_FEE_TEC` | 0.09 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
+| `TAXES_TEC` | 0.08 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
+| `SUPPLIER_MARGIN_TEC` | 0.05 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
+| `UTILITY_BALANCING_COST_TEC` | 0.03 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
+| → floor (export), derived | 0.05 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
+| → ceiling (import), derived | 0.30 | [§3.1](#31-where-the-floor-and-ceiling-come-from) |
 | `HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH` (prosumer registration) | 10 | [§1](#1-prosumer-with-surplus--own-battery-and-overflow-modes) |
 | `SHARED_BATTERY_CAPACITY_KWH` | 100 | [§6.1](#61-split) |
 | `SHARED_BATTERY_RENTED_SHARE` | 0.6 | [§6.1](#61-split) |
@@ -680,6 +717,47 @@ Update [ARCHITECTURE.md](ARCHITECTURE.md) and [API.md](API.md) to match.
 - `marketplace.test.ts`, `trade.test.ts` — rely on the old `energyBalance`.
 - `token.test.ts`, `api.test.ts`, `security.test.ts` — adjusted to new balances
   and endpoints.
+
+---
+
+## 11b. Frontend first — mock mode and API contract
+
+The frontend was built first, against an **in-browser implementation of this
+design** (`frontend/src/mock/`), so every screen works before the backend
+phases start.
+
+- `VITE_API_MODE=mock` (default): all calls are answered by the mock engine —
+  market clock, batteries, shared battery, auction, certificates, ledger.
+  Nothing is stored; a page reload restarts the demo.
+- `VITE_API_MODE=real`: calls go to the backend through the Vite proxy. Switch
+  only once the backend implements the contract below.
+- `frontend/src/types.ts` is the **API contract**: the backend must return
+  exactly these shapes. `frontend/src/mock/engine.ts` is a readable reference
+  implementation of the rules in this document (auction clearing, stocks with
+  certificates, decay, settlement order, invariants).
+
+| Method | Path | Returns | Auth |
+|---|---|---|---|
+| POST | `/auth/login`, `/auth/register` | `{ household, token }` | — |
+| GET | `/households`, `/households/:id` | `Household[]`, `Household` | — |
+| GET | `/households/:id/history?limit` | `EnergyMeasurement[]` (with `flow`) | — |
+| GET / POST | `/households/me/settings` | `HouseholdSettings` | yes |
+| POST | `/energy/measurements` | `MeasurementResult` | yes |
+| GET | `/market/status` | `MarketStatus` (clock, band + components, last price, 24h avg) | — |
+| GET | `/market/price-history?limit` | `PricePoint[]` | — |
+| GET | `/market/auctions/latest` | `AuctionResult` (all bids with matched kWh) | — |
+| GET | `/market/my-bid` | `MyBidPreview` | yes |
+| GET | `/market/offers`, `/market/offers/mine` | `EnergyOffer[]` | mine: yes |
+| POST | `/market/offers`, `/market/offers/:id/cancel`, `/market/offers/:id/purchase` | `EnergyOffer` / `EnergyTrade` | yes |
+| GET | `/trades?householdId` | `EnergyTrade[]` | — |
+| GET | `/wallet/:id` | `Wallet` (own only) | yes |
+| POST | `/wallet/topup`, `/wallet/cashout` | `Wallet` | yes |
+| GET | `/tokens/history/:id?limit` | `LedgerTx[]` (own only) | yes |
+| GET | `/transactions?limit&asset=ALL\|TEC\|CERT\|RECORD` | `LedgerTx[]` | — |
+| GET | `/blockchain/status`, `/blockchain/blocks`, `/blockchain/blocks/:i` | `LedgerStatus`, `BlockchainBlock[]`, `BlockDetail` | — |
+| GET | `/grid/status` | `SharedBatteryStatus` | — |
+| GET | `/microgrid`, `/dashboard` | `MicrogridNode[]`, `DashboardSummary` (includes the §9 checks) | — |
+| POST | `/sim/pause`, `/sim/resume`, `/sim/step`, `/sim/reset` | `MarketStatus` — demo controls, dev only | yes |
 
 ---
 
