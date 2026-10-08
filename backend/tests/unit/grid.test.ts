@@ -19,10 +19,11 @@ function expectAllChecks(c: Container) {
   });
 }
 
+// Routing tests opt their households out of the auction, so export and import happen at the reading.
 describe("Phase 2 — batteries, the shared battery and the utility (DESIGN.md §1, §5, §6, §7.4)", () => {
   it("routes a store-mode surplus: own battery → rented storage → export", async () => {
     const c = buildTestContainer();
-    const home = await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 2, settings: { overflowMode: "store" } });
+    const home = await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 2, settings: { overflowMode: "store", auctionOptOut: true } });
 
     const { measurement } = await c.measurements.record(home.id, 15, 1); // surplus 14
 
@@ -37,7 +38,7 @@ describe("Phase 2 — batteries, the shared battery and the utility (DESIGN.md �
 
   it("skips rented storage in sell mode: the overflow is exported", async () => {
     const c = buildTestContainer();
-    const home = await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 2 }); // sell mode by default
+    const home = await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 2, settings: { auctionOptOut: true } }); // sell mode by default
 
     const { measurement } = await c.measurements.record(home.id, 6, 1);
 
@@ -48,7 +49,7 @@ describe("Phase 2 — batteries, the shared battery and the utility (DESIGN.md �
     const c = buildTestContainer();
     const homes = [];
     for (let i = 0; i < 7; i++) {
-      homes.push(await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 0, settings: { overflowMode: "store" } }));
+      homes.push(await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 0, settings: { overflowMode: "store", auctionOptOut: true } }));
     }
     for (const h of homes) await c.measurements.record(h.id, 12, 0);
 
@@ -60,7 +61,7 @@ describe("Phase 2 — batteries, the shared battery and the utility (DESIGN.md �
 
   it("covers a deficit from the battery, then stored energy, then imports at the ceiling", async () => {
     const c = buildTestContainer();
-    const home = await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 2, settings: { overflowMode: "store" } });
+    const home = await seedHousehold(c, { type: "prosumer", batteryCapacityKwh: 2, settings: { overflowMode: "store", auctionOptOut: true } });
     await c.measurements.record(home.id, 13, 1); // battery 2, storage 10
 
     const { measurement } = await c.measurements.record(home.id, 0, 13);

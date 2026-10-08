@@ -6,10 +6,8 @@ const START_SIM_MINUTES = 6 * 60; // day 1, 06:00 (docs/DESIGN.md §0.6)
 /**
  * The microgrid's simulated clock: minutes since day 1 00:00 and an interval
  * counter, persisted in `meta` so it survives restarts. Each interval lasts
- * SIMULATION_MINUTES_PER_TICK simulated minutes.
- *
- * Phase 2: advanced by the simulation tick. Phase 3 gives it its own timer
- * (the market clock) so the auction settles even with the simulation off.
+ * MARKET_INTERVAL_SIM_MINUTES simulated minutes and MARKET_INTERVAL_MS real
+ * milliseconds; MarketService advances it at the end of every interval.
  */
 export class ClockService {
   private lastAdvanceAt = Date.now();
@@ -29,12 +27,22 @@ export class ClockService {
   }
 
   minutesPerInterval(): number {
-    return env.simulationMinutesPerTick;
+    return env.marketIntervalSimMinutes;
   }
 
-  /** Real milliseconds until the next interval, assuming the simulation drives it. */
+  /** Intervals in one simulated day (the 24-hour window of the grid pool trader). */
+  intervalsPerDay(): number {
+    return Math.round(1440 / this.minutesPerInterval());
+  }
+
+  /** Real milliseconds until the current interval settles. */
   msUntilNextInterval(): number {
-    return Math.max(0, env.simulationTickMs - (Date.now() - this.lastAdvanceAt));
+    return Math.max(0, env.marketIntervalMs - (Date.now() - this.lastAdvanceAt));
+  }
+
+  /** Restarts the real-time countdown (when the market clock starts). */
+  resetCountdown(): void {
+    this.lastAdvanceAt = Date.now();
   }
 
   advance(): { simTime: number; interval: number } {

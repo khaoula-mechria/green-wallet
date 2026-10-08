@@ -7,6 +7,7 @@ import { CLEARING_ACCOUNT, type LedgerService } from "./ledgerService.js";
 import { greenShareOf } from "./certificateService.js";
 import type { GridService } from "./gridService.js";
 import type { ClockService } from "./clockService.js";
+import type { AuctionService } from "./auctionService.js";
 import type { ConservationChecks, DashboardSummary, MicrogridNode } from "../domain/types.js";
 import { priceBand } from "../config/env.js";
 
@@ -21,7 +22,8 @@ export class AnalyticsService {
     db: Database,
     private readonly ledger: LedgerService,
     private readonly grid: GridService,
-    private readonly clock: ClockService
+    private readonly clock: ClockService,
+    private readonly auction: AuctionService
   ) {
     this.households = new HouseholdRepository(db);
     this.offers = new OfferRepository(db);
@@ -41,8 +43,8 @@ export class AnalyticsService {
       interval: this.clock.interval(),
       production: round2(households.reduce((s, h) => s + h.currentProduction, 0)),
       consumption: round2(households.reduce((s, h) => s + h.currentConsumption, 0)),
-      lastPrice: null, // no auction until Phase 3
-      avg24h: band.mid,
+      lastPrice: this.auction.lastPrice(),
+      avg24h: this.grid.avg24h(),
       band,
       greenShare: greenShareOf(households),
       tokenCirculation: round2(this.accounts.findByKind("household").reduce((s, a) => s + a.balance, 0)),
@@ -57,7 +59,7 @@ export class AnalyticsService {
 
   /** docs/DESIGN.md §9 — the five conservation checks. */
   checks(): ConservationChecks {
-    const clearing = round2(this.ledger.getBalance(CLEARING_ACCOUNT).balance);
+    const clearing = round2(this.ledger.getBalance(CLEARING_ACCOUNT).balance) + 0; // + 0 turns -0 into 0
     const accounts = this.accounts.findAll();
     return {
       money: this.ledger.checkMoneyInvariant(),

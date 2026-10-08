@@ -5,6 +5,7 @@ import { ClockService } from "./services/clockService.js";
 import { LedgerService } from "./services/ledgerService.js";
 import { CertificateService } from "./services/certificateService.js";
 import { GridService } from "./services/gridService.js";
+import { AuctionService } from "./services/auctionService.js";
 import { AuthService } from "./services/authService.js";
 import { HouseholdService } from "./services/householdService.js";
 import { TokenService } from "./services/tokenService.js";
@@ -23,6 +24,7 @@ export interface Container {
   ledger: LedgerService;
   certificates: CertificateService;
   grid: GridService;
+  auction: AuctionService;
   auth: AuthService;
   households: HouseholdService;
   tokens: TokenService;
@@ -42,14 +44,15 @@ export function createContainer(db: Database): Container {
   ledger.bootstrap(); // operator accounts and initial funding
   const certificates = new CertificateService(db, ledger);
   const grid = new GridService(db, ledger, certificates, clock);
-  const households = new HouseholdService(db, grid);
+  const auction = new AuctionService(db, ledger, certificates, grid, clock);
+  const households = new HouseholdService(db, grid, auction);
   const auth = new AuthService(db, ledger, households);
   const tokens = new TokenService(db, ledger);
-  const measurements = new MeasurementService(db, ledger, certificates, grid, clock);
+  const measurements = new MeasurementService(db, ledger, certificates, grid, clock, auction);
   const marketplace = new MarketplaceService(db, grid, clock);
   const trades = new TradeService(db, ledger, certificates, grid, clock);
-  const market = new MarketService(db, clock, grid);
-  const analytics = new AnalyticsService(db, ledger, grid, clock);
+  const market = new MarketService(db, clock, grid, auction);
+  const analytics = new AnalyticsService(db, ledger, grid, clock, auction);
   const simulation = new SimulationService(db, measurements, market, clock);
   const notifications = new NotificationHub();
 
@@ -60,6 +63,7 @@ export function createContainer(db: Database): Container {
     ledger,
     certificates,
     grid,
+    auction,
     auth,
     households,
     tokens,

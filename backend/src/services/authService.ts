@@ -89,6 +89,8 @@ export class AuthService {
       batteryCapacityKwh,
       batteryKwh: 0,
       storedKwh: 0,
+      pendingSellKwh: 0,
+      pendingBuyKwh: 0,
       settings: resolveSettings(defaultSettings(), input.settings ?? {}, input.type, batteryCapacityKwh),
       importedKwh: 0,
       importCost: 0,

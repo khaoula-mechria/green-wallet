@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Container } from "../../container.js";
 import { asyncRoute } from "../../middleware/errorHandler.js";
 import { requireAuth } from "../../middleware/auth.js";
-import { parseBody } from "../../middleware/validate.js";
+import { parseBody, parseLimit } from "../../middleware/validate.js";
 import { z } from "zod";
 
 const offerSchema = z.object({ amountKwh: z.number().finite(), pricePerKwh: z.number().finite() }).strict();
@@ -16,6 +16,31 @@ export function marketRoutes(c: Container): Router {
     "/status",
     asyncRoute(async (_req, res) => {
       res.json({ success: true, data: c.market.status() });
+    })
+  );
+
+  // Clearing price of every settled interval, oldest first (the price chart).
+  router.get(
+    "/price-history",
+    asyncRoute(async (req, res) => {
+      res.json({ success: true, data: c.auction.history(parseLimit(req.query.limit, 48)) });
+    })
+  );
+
+  // The last settled auction with every bid and what it matched.
+  router.get(
+    "/auctions/latest",
+    asyncRoute(async (_req, res) => {
+      res.json({ success: true, data: c.auction.latest() });
+    })
+  );
+
+  // What the caller's automatic agent is bidding in the current interval.
+  router.get(
+    "/my-bid",
+    requireAuth,
+    asyncRoute(async (req, res) => {
+      res.json({ success: true, data: c.auction.myBid(req.auth!.householdId) });
     })
   );
 

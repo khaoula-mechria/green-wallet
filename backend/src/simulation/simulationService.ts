@@ -4,20 +4,17 @@ import type { MeasurementService } from "../services/measurementService.js";
 import type { MarketService } from "../services/marketService.js";
 import type { ClockService } from "../services/clockService.js";
 import { simulateReading } from "./curves.js";
-import { env } from "../config/env.js";
 
 /**
- * Drives the physical-energy layer of the demo. Every tick closes the current
- * market interval (storage decay, offer expiry — and the auction in Phase 3),
- * then generates one meter reading per household from its role's energy profile
- * and feeds it through MeasurementService. The simulated clock runs much faster
- * than real time (SIMULATION_MINUTES_PER_TICK per tick), so a full day plays out
- * in a few minutes.
+ * Drives the physical-energy layer of the demo: at the start of every market
+ * interval it records one meter reading per household from its role's energy
+ * profile (solar farm, wind farm, rooftop prosumer, consumer). The market clock
+ * (MarketService) owns time and settles each interval; the simulated clock runs
+ * much faster than real time, so a full day plays out in a few minutes.
  */
 export class SimulationService {
   private readonly households: HouseholdRepository;
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private tickInFlight = false;
+  private unsubscribe: (() => void) | null = null;
 
   constructor(
     db: Database,
@@ -29,27 +26,22 @@ export class SimulationService {
   }
 
   start(): void {
-    if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), env.simulationTickMs);
-    this.market.setRunning(true);
-    console.log(
-      `[simulation] started: tick every ${env.simulationTickMs}ms, +${env.simulationMinutesPerTick} simulated minutes per tick`
-    );
+    if (this.unsubscribe) return;
+    this.unsubscribe = this.market.onIntervalStart(() => this.recordReadings());
+    console.log("[simulation] started: one simulated reading per household every market interval");
   }
 
   stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-    this.market.setRunning(false);
+    this.unsubscribe?.();
+    this.unsubscribe = null;
   }
 
   getSimulatedHourOfDay(): number {
     return (this.clock.simTime() % 1440) / 60;
   }
 
-  /** One interval: close the current one, then record everyone's readings for the next. */
-  async runInterval(): Promise<void> {
-    this.market.endInterval();
+  /** Readings for the current interval, from each household's energy profile. */
+  async recordReadings(): Promise<void> {
     const hourOfDay = this.getSimulatedHourOfDay();
     for (const h of this.households.findAll()) {
       const { production, consumption } = simulateReading(h, hourOfDay, Math.random);
@@ -57,15 +49,9 @@ export class SimulationService {
     }
   }
 
-  private async tick(): Promise<void> {
-    if (this.tickInFlight) return; // avoid overlapping ticks if one runs long
-    this.tickInFlight = true;
-    try {
-      await this.runInterval();
-    } catch (err) {
-      console.error("[simulation] tick failed:", (err as Error).message);
-    } finally {
-      this.tickInFlight = false;
-    }
+  /** One full interval without timers (tests, scripts): settle the current one, then record the next. */
+  async runInterval(): Promise<void> {
+    this.market.endInterval();
+    await this.recordReadings();
   }
 }

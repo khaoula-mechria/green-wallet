@@ -31,6 +31,8 @@ export interface Household {
   batteryCapacityKwh: number;
   batteryKwh: number; // charge of the household's own battery
   storedKwh: number; // the household's rented space in the shared battery
+  pendingSellKwh: number; // this interval's surplus waiting for the auction
+  pendingBuyKwh: number; // this interval's deficit waiting for the auction
   settings: HouseholdSettings;
   importedKwh: number; // utility statement (real money, off-ledger)
   importCost: number;
@@ -65,6 +67,9 @@ export type LedgerTxType =
   | "CASHOUT"
   | "TRANSFER"
   | "TRADE_SETTLEMENT"
+  | "AUCTION_PAYMENT"
+  | "AUCTION_PAYOUT"
+  | "CLEARING_SWEEP"
   | "CERT_ISSUE"
   | "CERT_TRANSFER"
   | "CERT_RETIRE"
@@ -266,6 +271,52 @@ export interface MarketStatus {
   lastPrice: number | null;
   avg24h: number;
   mockMode: boolean;
+}
+
+export interface PricePoint {
+  interval: number;
+  simTime: number;
+  price: number | null;
+  volume: number;
+  exportedKwh: number;
+  importedKwh: number;
+  avg24h: number;
+}
+
+export type BidSide = "sell" | "buy";
+export type BidSource = "surplus" | "storage" | "battery" | "grid-pool" | "deficit";
+
+export interface AuctionBid {
+  id: string;
+  participantId: string;
+  participantName: string;
+  participantType: HouseholdType | "operator";
+  side: BidSide;
+  source: BidSource;
+  quantity: number;
+  limitPrice: number;
+  matched: number;
+}
+
+export interface AuctionResult {
+  interval: number;
+  simTime: number;
+  clearingPrice: number | null;
+  volume: number;
+  lastMatchedSellPrice: number | null;
+  lastMatchedBuyPrice: number | null;
+  bids: AuctionBid[];
+  exportedKwh: number;
+  importedKwh: number;
+}
+
+export interface MyBidPreview {
+  side: BidSide | null;
+  bids: Array<{ source: BidSource; quantity: number; limitPrice: number }>;
+  pendingSellKwh: number;
+  pendingBuyKwh: number;
+  reservedTec: number;
+  optedOut: boolean;
 }
 
 export interface MicrogridNode {

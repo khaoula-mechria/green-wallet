@@ -46,7 +46,8 @@ export class AccountRepository {
   }
 
   updateBalance(id: string, delta: number): void {
-    this.db.prepare(`UPDATE accounts SET balance = balance + ? WHERE id = ?`).run(delta, id);
+    // TEC moves in cents; rounding keeps float drift (0.44 + 0.11 - 0.54 - 0.01) from leaving -1e-17 behind.
+    this.db.prepare(`UPDATE accounts SET balance = ROUND(balance + ?, 6) WHERE id = ?`).run(delta, id);
   }
 
   updateReserved(id: string, delta: number): void {

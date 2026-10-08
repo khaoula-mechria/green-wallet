@@ -38,6 +38,8 @@ async function start() {
     console.log(`[server] blockchain mode: ${container.blockchain.mode} (local simulated ledger — Hedera integration coming in a future phase)`);
   });
 
+  // The market clock always runs, so manual readings settle even without the simulation.
+  container.market.start();
   if (env.simulationEnabled) {
     container.simulation.start();
   }
@@ -47,6 +49,7 @@ void start();
 
 function shutdown() {
   container.simulation.stop();
+  container.market.stop();
   httpServer.close(() => process.exit(0));
 }
 

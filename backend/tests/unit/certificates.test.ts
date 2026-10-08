@@ -21,7 +21,8 @@ function expectBalanced(c: Container) {
 describe("Green certificates follow the kWh (DESIGN.md §2)", () => {
   it("certifies a wind farm's output as WIND and hands it to the utility with the export", async () => {
     const c = buildTestContainer();
-    const farm = await seedHousehold(c, { type: "producer", energyType: "wind" });
+    // Opted out of the auction: the farm's output is exported at once.
+    const farm = await seedHousehold(c, { type: "producer", energyType: "wind", settings: { auctionOptOut: true } });
 
     const { certificateTx } = await c.measurements.record(farm.id, 6, 0);
 
@@ -49,7 +50,7 @@ describe("Green certificates follow the kWh (DESIGN.md §2)", () => {
 
   it("imports what its own stock can't cover — grey energy on the utility bill", async () => {
     const c = buildTestContainer();
-    const home = await seedHousehold(c, { type: "prosumer" });
+    const home = await seedHousehold(c, { type: "prosumer", settings: { auctionOptOut: true } });
 
     await c.measurements.record(home.id, 3, 2); // 1 kWh into the battery
     await c.measurements.record(home.id, 0, 3); // 1 from the battery, 2 imported
@@ -136,7 +137,8 @@ describe("Green certificates follow the kWh (DESIGN.md §2)", () => {
     const home = await seedHousehold(c, { type: "prosumer" });
     const consumer = await seedHousehold(c, { type: "consumer" });
     await c.measurements.record(home.id, 3, 1); // 1 solar consumed
-    await c.measurements.record(consumer.id, 0, 3); // 3 grey
+    await c.measurements.record(consumer.id, 0, 3); // bought in the auction from the grid pool: grey
+    c.market.endInterval();
 
     const dashboard = c.analytics.getDashboard();
     expect(dashboard.greenShare).toEqual({ solarKwh: 1, windKwh: 0, greyKwh: 3, percentGreen: 25 });

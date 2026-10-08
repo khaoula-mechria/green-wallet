@@ -8,10 +8,10 @@ const NONE: CertificateAmounts = { solar: 0, wind: 0 };
 
 /**
  * Certificates follow the kWh (docs/DESIGN.md §2.3). A household's energy stock
- * is its own battery plus its rented space in the shared battery; its
- * certificates back that whole stock, so moving X kWh out of it moves
- * X / stock of each certificate type. (One certificate pool per household:
- * battery and rented space share it.) Listed offers don't move energy, they
+ * is its own battery, its rented space in the shared battery and this interval's
+ * surplus waiting for the auction; its certificates back that whole stock, so
+ * moving X kWh out of it moves X / stock of each certificate type. (One
+ * certificate pool per household.) Listed offers don't move energy, they
  * reserve part of the stock, so they don't change the stock either.
  */
 export class CertificateService {
@@ -24,7 +24,7 @@ export class CertificateService {
   stockKwh(householdId: string): number {
     const h = this.households.findById(householdId);
     if (!h) throw new NotFoundError("Household");
-    return h.batteryKwh + h.storedKwh;
+    return h.batteryKwh + h.storedKwh + h.pendingSellKwh;
   }
 
   /** Certificates that travel with `kwh` taken out of the household's stock. Call it

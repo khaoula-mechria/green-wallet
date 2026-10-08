@@ -88,11 +88,9 @@ describe("Phase 0 — manual meter readings are bounded", () => {
     const second = await submit({ production: 8, consumption: 3 });
     expect(second.status).toBe(429);
     expect(second.body.error.code).toBe("TOO_MANY_REQUESTS");
-    // One accepted reading: 8 kWh certified, 3 used on the spot, 5 exported (a producer has no
-    // storage) with their certificates. Production earns no TEC; the export is on the utility statement.
-    const wallet = container.tokens.wallet("meter-1");
-    expect(wallet.certificates).toEqual({ solar: 0, wind: 0 });
-    expect(wallet.utility).toMatchObject({ exportedKwh: 5, exportCredit: 0.25 });
+    // One accepted reading: 8 kWh certified, 3 used on the spot, 5 waiting for the auction
+    // (still backed by their certificates). Production earns no TEC.
+    expect(container.tokens.wallet("meter-1").certificates).toEqual({ solar: 5, wind: 0 });
     expect(container.tokens.getBalance("meter-1")).toBe(0);
   });
 

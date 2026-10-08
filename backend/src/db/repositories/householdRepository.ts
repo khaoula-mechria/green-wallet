@@ -16,6 +16,7 @@ type HouseholdRow = Omit<Household, "settings"> & {
 const COLUMNS = [
   "id", "name", "type", "location", "passwordHash", "hederaAccountId", "hederaPrivateKeyEncrypted",
   "energyType", "currentProduction", "currentConsumption", "batteryCapacityKwh", "batteryKwh", "storedKwh",
+  "pendingSellKwh", "pendingBuyKwh",
   "overflowMode", "minSellPrice", "maxBuyPrice", "storeMinPrice", "batterySellEnabled", "batterySellMinPrice",
   "batteryKeepPercent", "auctionOptOut", "importedKwh", "importCost", "exportedKwh", "exportCredit",
   "consumedKwh", "consumedSolarKwh", "consumedWindKwh", "createdAt", "updatedAt",
@@ -54,6 +55,21 @@ export class HouseholdRepository {
          WHERE id = ?`
       )
       .run(deltaBatteryKwh, deltaStoredKwh, updatedAt, id);
+  }
+
+  /** This interval's surplus / deficit waiting for the auction. */
+  adjustPending(id: string, deltaSellKwh: number, deltaBuyKwh: number): void {
+    this.db
+      .prepare(
+        `UPDATE households
+         SET pendingSellKwh = MAX(0, ROUND(pendingSellKwh + ?, 9)), pendingBuyKwh = MAX(0, ROUND(pendingBuyKwh + ?, 9))
+         WHERE id = ?`
+      )
+      .run(deltaSellKwh, deltaBuyKwh, id);
+  }
+
+  sumPendingSellKwh(): number {
+    return (this.db.prepare(`SELECT COALESCE(SUM(pendingSellKwh), 0) AS total FROM households`).get() as { total: number }).total;
   }
 
   /** Utility statement lines (DESIGN.md §7.4): import debit / export credit. */

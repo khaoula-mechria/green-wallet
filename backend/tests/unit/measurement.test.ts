@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { buildTestContainer, seedHousehold } from "../testContainer.js";
 
 describe("MeasurementService — surplus/deficit calculation", () => {
-  it("certifies a producer's output and exports its surplus — no TEC is created", async () => {
+  it("certifies a producer's output; the surplus waits for the auction — no TEC is created", async () => {
     const c = buildTestContainer();
     const producer = await seedHousehold(c, { type: "producer" }); // no welcome grant
 
@@ -19,16 +19,15 @@ describe("MeasurementService — surplus/deficit calculation", () => {
     expect(certificateTx!.amount).toBe(8);
     expect(retired).toEqual({ solar: 3, wind: 0 });
 
-    // A producer has no storage: the 5 kWh surplus is exported at the floor price, and its
-    // certificates go to the utility with it. Producing earns proof, not TEC.
-    expect(measurement.flow).toMatchObject({ selfUse: 3, exported: 5, toBattery: 0, settled: true });
-    const wallet = c.tokens.wallet(producer.id);
-    expect(wallet.certificates).toEqual({ solar: 0, wind: 0 });
-    expect(wallet.utility).toEqual({ importedKwh: 0, importCost: 0, exportedKwh: 5, exportCredit: 0.25, net: 0.25 });
+    // A producer has no storage: its 5 kWh surplus is offered in this interval's auction,
+    // still backed by its certificates. Producing earns proof, not TEC.
+    expect(measurement.flow).toMatchObject({ selfUse: 3, toAuction: 5, toBattery: 0, exported: 0, settled: false });
+    expect(c.tokens.wallet(producer.id).certificates).toEqual({ solar: 5, wind: 0 });
+    expect(c.auction.myBid(producer.id).bids).toEqual([{ source: "surplus", quantity: 5, limitPrice: 0.05 }]);
     expect(c.tokens.getBalance(producer.id)).toBe(0);
   });
 
-  it("imports a deficit with nothing stored: grey energy on the utility bill, no TEC", async () => {
+  it("sends a deficit with nothing stored to the auction, with the TEC to pay for it reserved", async () => {
     const c = buildTestContainer();
     const consumer = await seedHousehold(c, { type: "consumer" }); // 10 TEC grant
 
@@ -38,10 +37,18 @@ describe("MeasurementService — surplus/deficit calculation", () => {
     expect(certificateTx).toBeNull();
     expect(retired).toEqual({ solar: 0, wind: 0 });
 
-    expect(measurement.flow).toMatchObject({ imported: 4 });
-    expect(c.tokens.wallet(consumer.id).utility).toMatchObject({ importedKwh: 4, importCost: 1.2, net: -1.2 });
-    expect(c.tokens.getBalance(consumer.id)).toBeCloseTo(10, 2); // the utility bills in real money, not TEC
+    expect(measurement.flow).toMatchObject({ toBuy: 4, imported: 0, settled: false });
+    // Budget check: 4 kWh at the 0.30 buy limit = 1.20 TEC reserved until the auction settles.
+    expect(c.tokens.wallet(consumer.id)).toMatchObject({ tokenBalance: 10, reservedTec: 1.2, availableTec: 8.8 });
+    expect(c.auction.myBid(consumer.id).bids).toEqual([{ source: "deficit", quantity: 4, limitPrice: 0.3 }]);
+    expect(c.tokens.wallet(consumer.id).greenShare.greyKwh).toBe(0); // counted once supplied
+
+    // At the end of the interval the grid pool (pre-charged, grey) sells it at one clearing price.
+    const { auction } = c.market.endInterval();
+    const paid = Math.ceil(4 * auction.clearingPrice! * 100 - 1e-6) / 100;
+    expect(c.tokens.wallet(consumer.id)).toMatchObject({ reservedTec: 0, tokenBalance: 10 - paid });
     expect(c.tokens.wallet(consumer.id).greenShare).toEqual({ solarKwh: 0, windKwh: 0, greyKwh: 4, percentGreen: 0 });
+    expect(c.households.getHistory(consumer.id, 1)[0].flow).toMatchObject({ bought: 4, imported: 0, settled: true, price: auction.clearingPrice });
   });
 
   it("rejects negative production or consumption", async () => {

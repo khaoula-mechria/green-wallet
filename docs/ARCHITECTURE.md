@@ -1,112 +1,145 @@
 # Architecture
 
+How the code implements [DESIGN.md](DESIGN.md). The design says *what* the market does;
+this page says *where* it happens.
+
 ## Layers
 
 ```mermaid
 flowchart TB
     subgraph Frontend["frontend (React + Vite)"]
-        UI["Pages: Dashboard, Marketplace, Wallet,\nBlockchain Explorer, Microgrid, ..."]
+        UI["Pages: Dashboard, Auction, Marketplace, Energy,\nBattery & Settings, Wallet, Microgrid, Explorer, ..."]
+        Mock["src/mock — in-browser engine\n(VITE_API_MODE=mock)"]
     end
 
     subgraph Backend["backend (Express + TypeScript)"]
         API["api/routes/* — HTTP boundary,\nauth + request validation only"]
-        Services["services/* — application logic\n(AuthService, MeasurementService,\nMarketplaceService, TradeService,\nTokenService, AnalyticsService)"]
-        Domain["domain/types.ts — shared domain model"]
+        Services["services/* — application logic"]
+        Clearing["market/clearing.ts — pure auction clearing"]
         Repos["db/repositories/* — one repo per table,\nno business logic"]
     end
 
     DB[("SQLite\ngreen-wallet.db")]
-    Chain["blockchain/BlockchainService\n(interface)"]
-    Local["LocalBlockchainService\n(hash-chained, default)"]
-    Hedera["HederaBlockchainService\n(@hashgraph/sdk, opt-in)"]
 
-    UI -->|REST + WebSocket| API
+    UI -->|"REST + WebSocket\n(VITE_API_MODE=real)"| API
+    UI -.->|"same contract\n(frontend/src/types.ts)"| Mock
     API --> Services
-    Services --> Domain
+    Services --> Clearing
     Services --> Repos
     Repos --> DB
-    Services --> Chain
-    Chain -.implements.-> Local
-    Chain -.implements.-> Hedera
-    Local --> DB
-    Hedera -->|testnet only when\nHEDERA_* env vars set| HederaNet[["Hedera Hashgraph\nTestnet"]]
 ```
 
-**Why this shape:** the functional spec explicitly asks for a `BlockchainService`-style
-abstraction so the ledger implementation can be swapped without touching the rest of the
-app. `TokenService` and `TradeService` depend only on the `BlockchainService` interface
-(`recordTransaction`, `provisionAccount`, `getChain`, `getStatus`) — swapping
-`LocalBlockchainService` for `HederaBlockchainService`, or a future
-Ethereum/Polygon/Hyperledger implementation, requires no change outside
-`blockchain/index.ts`.
+`frontend/src/types.ts` is the API contract: the backend returns exactly those shapes, and
+the in-browser mock implements the same contract so the frontend runs without a backend.
+
+### Services
+
+| Service | Owns |
+|---|---|
+| `ClockService` | simulated time and the interval counter (persisted in `meta`) |
+| `MarketService` | the market clock: closes every interval (decay → auction → clock → offer expiry) |
+| `AuctionService` | automatic bids, TEC reservation, settlement through the clearing account, imbalance |
+| `MeasurementService` | meter readings: certificates, self-use, own battery / storage, what waits for the auction |
+| `GridService` | the shared battery (rented space + grid pool), storage decay, listable kWh, the energy check |
+| `CertificateService` | which certificates travel with a given amount of energy; green share |
+| `LedgerService` | every TEC and certificate movement, Hedera-style IDs, simulated fees, hash-chained blocks |
+| `MarketplaceService` / `TradeService` | fixed-price offers and their atomic settlement |
+| `HouseholdService` / `AuthService` | the contract's household view, agent settings, registration rules |
+| `TokenService` | wallet, top-up / cash-out, history |
+| `AnalyticsService` | dashboard (with the five conservation checks) and the microgrid map |
+| `SimulationService` | one simulated reading per household at the start of every interval |
 
 ## Physical vs. digital layer
 
-The spec requires these to be kept conceptually separate — concretely:
-
 | Layer | Owns | Lives in |
 |---|---|---|
-| Physical energy | kWh readings, surplus/deficit math | `MeasurementService`, `energy_measurements` table |
-| Digital/trading | TEC token balances, transfers, ledger records | `TokenService`, `BlockchainService`, `token_transactions` / `blockchain_transactions` tables |
+| Physical energy | kWh in batteries, rented storage, the grid pool, readings and their flow | `households`, `grid_storage`, `energy_measurements` |
+| Proof of origin | SOLAR / WIND certificates (account balances that follow the kWh) | `accounts.solarBalance / windBalance`, `ledger_transactions` |
+| Money | TEC balances, reservations, the treasury / clearing / grid-storage accounts | `accounts.balance / reservedBalance`, `ledger_transactions` |
+| Off-ledger | the utility statement (imports and exports, real money) | `households.imported* / exported*` |
 
-`MeasurementService` never touches token balances directly — it calls
-`TokenService.mint()` when a positive surplus is recorded. `TradeService` never touches
-kWh accounting beyond what `MarketplaceService`/`HouseholdRepository` already track — it
-calls `TokenService.transfer()` for the financial settlement. This mirrors domain rule
-#11 in the spec (token/financial value stays conceptually separate from physical
-electricity).
+Production never creates money: it issues certificates. TEC only moves when energy
+changes hands (auction, marketplace) or through the treasury (grants, top-ups, cash-outs).
 
-## Trade execution (the "smart contract")
+## One market interval
+
+```mermaid
+sequenceDiagram
+    participant Clock as MarketService (timer)
+    participant Grid as GridService
+    participant Auction as AuctionService
+    participant Ledger as LedgerService
+    participant Sim as SimulationService
+    participant Meter as MeasurementService
+
+    Note over Meter: during the interval: readings use own battery and storage at once;<br/>leftover surplus / deficit wait (pendingSellKwh / pendingBuyKwh), buyer TEC reserved
+    Clock->>Grid: applyDecay() — stored kWh decay into the grid pool
+    Clock->>Auction: settle()
+    Auction->>Auction: build bids (households + grid pool), clearAuction()
+    Auction->>Ledger: buyers → clearing, sellers' certificates → clearing, clearing → sellers
+    Auction->>Ledger: certificates clearing → buyers (retired as consumed), residue → treasury
+    Auction->>Auction: unmatched supply exported, unmatched demand imported
+    Auction->>Ledger: AUCTION_SUMMARY record
+    Clock->>Clock: advance clock, expire offers (all of the above: one DB transaction)
+    Clock->>Sim: interval started
+    Sim->>Meter: one reading per household
+```
+
+The market clock runs whether or not the simulation is on, so manual readings settle too.
+Clearing is a pure function (`market/clearing.ts`) so it can be tested on its own.
+
+## Marketplace purchase (the "smart contract")
 
 ```mermaid
 sequenceDiagram
     participant Buyer
     participant API as POST /market/offers/:id/purchase
     participant Trade as TradeService
-    participant Token as TokenService
-    participant Chain as BlockchainService
     participant DB as SQLite
 
     Buyer->>API: amountKwh
     API->>Trade: purchase(buyerId, offerId, amountKwh)
-    Trade->>DB: BEGIN — re-check offer.status/remaining, reserve capacity, insert trade(pending)
-    Trade->>Trade: executeTrade(tradeId)
-    Trade->>Trade: reject if trade.status != 'pending' (duplicate-execution guard)
-    Trade->>Token: transfer(buyer, seller, totalPrice)
-    Token->>Chain: recordTransaction(TRADE)
-    Chain-->>Token: blockchainTxId, blockHash
-    Token->>DB: BEGIN — debit buyer, credit seller, insert token_transaction — COMMIT
-    Trade->>DB: BEGIN — credit buyer.energyBalance, trade.status='completed' — COMMIT
-    Trade-->>API: completed trade
-    API-->>Buyer: 201 trade
+    Trade->>DB: BEGIN — offer active? enough left? room in buyer's rented space? reserve kWh, insert trade(pending) — COMMIT
+    Trade->>Trade: executeTrade — refuse unless trade.status = 'pending'
+    Trade->>DB: BEGIN — seller still has the kWh? buyer can pay? TEC buyer → seller,<br/>kWh seller (storage, then battery) → buyer's rented space, certificates with them,<br/>trade completed — COMMIT
+    Trade-->>Buyer: 201 trade
 ```
 
-Every multi-statement write is wrapped in a single `better-sqlite3` `db.transaction()`
-call (synchronous, atomic) — this closes the non-atomic-writes gap called out in the
-reference architecture doc this project builds on. The offer's remaining capacity is
-reserved *before* the async token transfer runs, and re-validated inside the same
-transaction, so two concurrent purchases against the same offer cannot both succeed
-(double-spend on energy). `executeTrade` refuses to run twice against a trade that isn't
-`pending` (double-spend on tokens / duplicate settlement).
+Settlement is a single transaction: if any check fails, nothing moves and the reserved
+kWh go back to the offer. Reserving before executing stops two buyers from taking the same
+kWh; the `pending` check stops a trade from settling twice.
 
-## Blockchain: local vs. Hedera mode
+## Ledger
 
-```mermaid
-flowchart LR
-    Env{"HEDERA_OPERATOR_ID +\nHEDERA_OPERATOR_KEY +\nHEDERA_TOKEN_ID\nall set?"}
-    Env -- "No (default)" --> LocalMode["LocalBlockchainService\nhash-chained blocks,\nsha256 proof-of-work,\nno external calls"]
-    Env -- "Yes" --> HederaMode["HederaBlockchainService\nreal TokenMintTransaction /\nTransferTransaction on\nHedera testnet,\n+ mirrors into the same\nlocal chain for the explorer"]
-```
+Every TEC and certificate movement goes through `LedgerService`: it checks balances,
+updates them atomically, gives the transaction a Hedera-style ID
+(`0.0.1000@<seconds>.<seq>`) and a simulated fee paid by the operator, and seals it into a
+hash-chained block. Operator accounts: `0.0.1000` operator (fee payer), `0.0.1001`
+treasury, `0.0.1002` clearing, `0.0.1003` grid storage, `0.0.1004` main utility grid
+(receives the certificates of exported energy).
 
-Nothing about the app's business logic changes between modes — only which
-`BlockchainService` implementation `blockchain/index.ts` constructs at boot. This is a
-deliberate consequence of the functional spec's requirement that a simplified ledger be
-acceptable for the MVP as long as it's structured to be replaced later.
+The app runs in local mode only. The `BlockchainService` interface and the original
+`HederaBlockchainService` adapter are kept for a future real-Hedera deployment, but they
+are not wired to the new money model; if `HEDERA_*` variables are set, the server warns and
+ignores them.
+
+## Conservation checks
+
+`AnalyticsService.checks()` (shown on the dashboard, asserted in the tests):
+
+| Check | Holds when |
+|---|---|
+| Money | Σ account balances = TEC created − TEC destroyed |
+| Clearing | the clearing account is back to 0 after every auction |
+| Energy | initial stock + produced + imported = consumed + exported + everything stored or waiting |
+| Certificates | issued = held + retired |
+| No negatives | no balance, stock or certificate balance below 0 |
 
 ## Simulation
 
-`SimulationService` runs a fast internal clock (default: +30 simulated minutes every 5
-real seconds, so a full day cycles in ~4 minutes) and drives a per-household solar
-production curve (zero at night, peaking at midday) and an independent consumption curve
-(morning/evening peaks) — see `simulation/curves.ts`. Every tick calls the same
-`MeasurementService.record()` path a manual `POST /api/energy/measurements` would.
+`SimulationService` records one reading per household at the start of every market
+interval (default: 30 simulated minutes every 5 real seconds, a day in ~4 minutes). Each
+role has its own profile (`simulation/curves.ts`): a large solar curve, a steadier wind
+curve, rooftop solar for prosumers, and household loads with morning and evening peaks.
+Every reading goes through the same `MeasurementService.record()` path as a manual
+`POST /api/energy/measurements`.

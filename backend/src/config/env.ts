@@ -43,6 +43,11 @@ export const env = {
   simulationTickMs: num(process.env.SIMULATION_TICK_MS, 5000),
   simulationMinutesPerTick: num(process.env.SIMULATION_MINUTES_PER_TICK, 30),
 
+  // Phase 3: the market clock (docs/DESIGN.md §0.6). One auction per interval; it
+  // runs even when the simulation is off. Defaults follow the simulation tick.
+  marketIntervalMs: num(process.env.MARKET_INTERVAL_MS, num(process.env.SIMULATION_TICK_MS, 5000)),
+  marketIntervalSimMinutes: num(process.env.MARKET_INTERVAL_SIM_MINUTES, num(process.env.SIMULATION_MINUTES_PER_TICK, 30)),
+
   // Manual meter readings are self-reported and therefore untrusted: they are
   // disabled by default in production until real metering is integrated, and
   // always bounded and rate-limited per household.
@@ -159,6 +164,8 @@ export function validateEnv(e: Env = env): string[] {
     ["SUPPLIER_MARGIN_TEC", e.supplierMarginTec],
     ["UTILITY_BALANCING_COST_TEC", e.utilityBalancingCostTec],
     ["HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH", e.householdDefaultBatteryCapacityKwh],
+    ["MARKET_INTERVAL_MS", e.marketIntervalMs],
+    ["MARKET_INTERVAL_SIM_MINUTES", e.marketIntervalSimMinutes],
     ["HOUSEHOLD_MAX_BATTERY_CAPACITY_KWH", e.householdMaxBatteryCapacityKwh],
     ["SHARED_BATTERY_CAPACITY_KWH", e.sharedBatteryCapacityKwh],
     ["RENTED_CAP_PER_HOUSEHOLD_KWH", e.rentedCapPerHouseholdKwh],
@@ -176,6 +183,10 @@ export function validateEnv(e: Env = env): string[] {
   const band = priceBand(e);
   if (!(band.floor >= 0 && band.floor < band.ceiling)) {
     problems.push(`price band is invalid: floor ${band.floor} must be >= 0 and below the ceiling ${band.ceiling}`);
+  }
+  if (!(e.marketIntervalMs >= 100)) problems.push("MARKET_INTERVAL_MS must be at least 100");
+  if (!(e.marketIntervalSimMinutes > 0 && 1440 % e.marketIntervalSimMinutes === 0)) {
+    problems.push("MARKET_INTERVAL_SIM_MINUTES must divide a day (e.g. 15, 30, 60)");
   }
   if (e.householdDefaultBatteryCapacityKwh > e.householdMaxBatteryCapacityKwh) {
     problems.push("HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH must not exceed HOUSEHOLD_MAX_BATTERY_CAPACITY_KWH");

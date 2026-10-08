@@ -164,6 +164,11 @@ export class LedgerService {
     return this.moveCertificate("CERT_RETIRE", asset, accountId, null, kwh, memo, null);
   }
 
+  /** One summary record per auction (DESIGN.md §4.3): mirrors a Hedera Consensus Service message. */
+  recordAuctionSummary(volumeKwh: number, memo: string): LedgerTransaction {
+    return this.db.transaction(() => this.recordTx("AUCTION_SUMMARY", "RECORD", CLEARING_ACCOUNT, null, volumeKwh, memo, null))();
+  }
+
   getCertificates(accountId: string): CertificateAmounts {
     const account = this.accounts.findById(accountId);
     if (!account) throw new NotFoundError("Account");
@@ -358,5 +363,5 @@ export class LedgerService {
 }
 
 function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+  return Math.round(n * 100) / 100 + 0; // + 0 turns -0 into 0
 }

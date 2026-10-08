@@ -1,6 +1,6 @@
 # Green Wallet — Energy Market Design
 
-**Status:** agreed design. Backend: Phases 0–2 implemented; Phase 3 (auction) to do.
+**Status:** agreed design. Backend: Phases 0–3 implemented.
 Frontend: complete, running on an in-browser mock of the whole design (§11b).
 This document is the target the codebase is brought to, phase by phase
 (see [§11 Implementation plan](#11-implementation-plan)).
@@ -656,7 +656,7 @@ wiped whenever the schema changes (free in local mode; auto-seed rebuilds it).
 | 0 — Money and ledger | ✅ done |
 | 1 — Roles and certificates | ✅ done |
 | 2 — Batteries, shared battery, utility | ✅ done |
-| 3 — Auction | to do |
+| 3 — Auction | ✅ done |
 
 ### Phase 0 — Foundations: money and ledger
 
@@ -733,6 +733,19 @@ wiped whenever the schema changes (free in local mode; auto-seed rebuilds it).
   auction opt-out.
 - Price history and its API; one ledger summary record per auction.
 - Clearing invariant test.
+- *As built:*
+  - `MarketService` owns the market clock (`MARKET_INTERVAL_MS`); each interval
+    end runs decay → auction → clock advance → offer expiry in one DB
+    transaction, then the simulation records the next interval's readings.
+  - Clearing is a pure function (`backend/src/market/clearing.ts`), tested on
+    the §4.4 examples and with randomised bids.
+  - Buyers pay rounded up and sellers are paid rounded down, so the clearing
+    account never goes negative; its residue is swept to the treasury every
+    interval and the clearing check stays at exactly 0.
+  - A household's battery, rented space and this interval's unsold surplus
+    share one certificate pool; consumption counts in the green share once it
+    is supplied (at the reading, or at settlement for auction purchases).
+  - Opted-out households still export / import at the reading.
 - **Frontend:** price chart, bid limits in settings, available/reserved balance.
 - **Demo:** price drops at noon, rises in the evening.
 

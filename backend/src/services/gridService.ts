@@ -3,7 +3,8 @@ import { HouseholdRepository } from "../db/repositories/householdRepository.js";
 import { OfferRepository } from "../db/repositories/offerRepository.js";
 import { MeasurementRepository } from "../db/repositories/measurementRepository.js";
 import { GridStorageRepository } from "../db/repositories/gridStorageRepository.js";
-import type { Household, SharedBatteryStatus } from "../domain/types.js";
+import { AuctionRepository } from "../db/repositories/auctionRepository.js";
+import type { CertificateAmounts, Household, SharedBatteryStatus } from "../domain/types.js";
 import { env, priceBand } from "../config/env.js";
 import { NotFoundError } from "../utils/errors.js";
 import { GRID_STORAGE_ACCOUNT, type LedgerService } from "./ledgerService.js";
@@ -27,6 +28,7 @@ export class GridService {
   private readonly offers: OfferRepository;
   private readonly measurements: MeasurementRepository;
   private readonly storage: GridStorageRepository;
+  private readonly auctions: AuctionRepository;
 
   constructor(
     db: Database,
@@ -38,6 +40,7 @@ export class GridService {
     this.offers = new OfferRepository(db);
     this.measurements = new MeasurementRepository(db);
     this.storage = new GridStorageRepository(db);
+    this.auctions = new AuctionRepository(db);
     // Pre-charged from the utility (grey energy) so the first evening has something to sell (§6.5).
     this.storage.ensure(this.poolCapacityKwh() * env.gridPoolInitialShare);
   }
@@ -132,11 +135,45 @@ export class GridService {
     return { decayedKwh };
   }
 
-  status(): SharedBatteryStatus {
+  /** Average clearing price of the last simulated day; mid-band without history (§6.4). */
+  avg24h(): number {
+    const prices = this.auctions.recentPrices(this.clock.intervalsPerDay());
+    if (prices.length === 0) return priceBand().mid;
+    return Math.round((prices.reduce((s, p) => s + p, 0) / prices.length) * 1000) / 1000;
+  }
+
+  /** The grid pool's auction limits: buy 10% below the 24h average, sell 10% above (§6.4). */
+  poolLimits(): { avg24h: number; buyBelow: number; sellAbove: number } {
     const band = priceBand();
-    // No auction history until Phase 3: the 24h average is the middle of the band (§6.4).
-    const avg24h = band.mid;
     const clamp = (p: number) => Math.min(band.ceiling, Math.max(band.floor, Math.round(p * 1000) / 1000));
+    const avg24h = this.avg24h();
+    return { avg24h, buyBelow: clamp(avg24h * env.gridPoolBuyBelowAvg), sellAbove: clamp(avg24h * env.gridPoolSellAboveAvg) };
+  }
+
+  poolKwh(): number {
+    return this.storage.get().poolKwh;
+  }
+
+  poolRoomKwh(): number {
+    return Math.max(0, this.poolCapacityKwh() - this.storage.get().poolKwh);
+  }
+
+  adjustPool(deltaKwh: number): void {
+    this.storage.adjustPool(deltaKwh);
+  }
+
+  /** Certificates that leave with `kwh` sold from the grid pool (its stock is grey + bought green). */
+  poolCertificateShare(kwh: number): CertificateAmounts {
+    const held = this.ledger.getCertificates(GRID_STORAGE_ACCOUNT);
+    const stock = this.storage.get().poolKwh;
+    if (kwh <= 0 || held.solar + held.wind <= 0) return { solar: 0, wind: 0 };
+    if (stock <= 0 || kwh >= stock - 0.005) return held;
+    const f = kwh / stock;
+    return { solar: Math.min(held.solar, round2(held.solar * f)), wind: Math.min(held.wind, round2(held.wind * f)) };
+  }
+
+  status(): SharedBatteryStatus {
+    const { avg24h, buyBelow, sellAbove } = this.poolLimits();
     const pool = this.storage.get();
     const greenPool = this.ledger.getCertificates(GRID_STORAGE_ACCOUNT);
     return {
@@ -154,8 +191,8 @@ export class GridService {
       },
       decayPerHour: env.storageDecayPerSimHour,
       avg24h,
-      gridBuysBelow: clamp(avg24h * env.gridPoolBuyBelowAvg),
-      gridSellsAbove: clamp(avg24h * env.gridPoolSellAboveAvg),
+      gridBuysBelow: buyBelow,
+      gridSellsAbove: sellAbove,
     };
   }
 
@@ -166,13 +203,16 @@ export class GridService {
     const sum = (f: (h: Household) => number) => all.reduce((s, h) => s + f(h), 0);
 
     const inputs = pool.initialStockKwh + this.measurements.sumProduction() + sum((h) => h.importedKwh);
-    const stocks = sum((h) => h.batteryKwh + h.storedKwh) + pool.poolKwh;
+    const stocks = sum((h) => h.batteryKwh + h.storedKwh + h.pendingSellKwh) + pool.poolKwh;
     const outputs = sum((h) => h.consumedKwh) + sum((h) => h.exportedKwh) + pool.operatorExportedKwh + stocks;
     return { ok: Math.abs(inputs - outputs) < Math.max(0.01, inputs * 1e-6), inputs: round2(inputs), outputs: round2(outputs) };
   }
 
   noNegativeStocks(): boolean {
-    return this.households.findAll().every((h) => h.batteryKwh >= -EPS && h.storedKwh >= -EPS) && this.storage.get().poolKwh >= -EPS;
+    return (
+      this.households.findAll().every((h) => h.batteryKwh >= -EPS && h.storedKwh >= -EPS && h.pendingSellKwh >= -EPS && h.pendingBuyKwh >= -EPS) &&
+      this.storage.get().poolKwh >= -EPS
+    );
   }
 }
 

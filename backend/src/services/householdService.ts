@@ -6,6 +6,7 @@ import { NotFoundError, ValidationError } from "../utils/errors.js";
 import type { Account, Household, HouseholdSettings, HouseholdType, PublicHousehold } from "../domain/types.js";
 import { priceBand } from "../config/env.js";
 import type { GridService } from "./gridService.js";
+import type { AuctionService } from "./auctionService.js";
 
 /** Default agent settings (DESIGN.md §4.1): sell from the floor, buy up to the ceiling
  * ("always beat the utility"), wait for mid-band with stored energy, battery selling off. */
@@ -62,7 +63,11 @@ export class HouseholdService {
   private readonly measurements: MeasurementRepository;
   private readonly accounts: AccountRepository;
 
-  constructor(db: Database, private readonly grid: GridService) {
+  constructor(
+    db: Database,
+    private readonly grid: GridService,
+    private readonly auction: AuctionService
+  ) {
     this.households = new HouseholdRepository(db);
     this.measurements = new MeasurementRepository(db);
     this.accounts = new AccountRepository(db);
@@ -95,6 +100,7 @@ export class HouseholdService {
     if (!h) throw new NotFoundError("Household");
     const next = resolveSettings(h.settings, patch, h.type, h.batteryCapacityKwh);
     this.households.updateSettings(id, next, Date.now());
+    this.auction.updateReservation(id); // a new buy limit or opt-out changes what is reserved
     return next;
   }
 
