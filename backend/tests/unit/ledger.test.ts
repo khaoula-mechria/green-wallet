@@ -113,28 +113,27 @@ describe("LedgerService — Phase 0 foundations", () => {
       expect(c.ledger.getBalance(account.id).balance).toBe(10);
     });
 
-    it("money invariant holds after transactions", async () => {
+    it("money invariant holds: Σ balances = total supply (strict)", async () => {
       const c = buildTestContainer();
-      const h1 = await seedHousehold(c, { type: "consumer" });
-      const h2 = await seedHousehold(c, { type: "producer" });
-      const h3 = await seedHousehold(c, { type: "prosumer" });
+      const h1 = await seedHousehold(c, { type: "consumer" }); // 10 TEC grant
+      const h2 = await seedHousehold(c, { type: "producer" }); // 0
+      const h3 = await seedHousehold(c, { type: "prosumer" }); // 10 TEC grant
 
       const a1 = c.ledger.getHouseholdAccount(h1.id);
       const a2 = c.ledger.getHouseholdAccount(h2.id);
       const a3 = c.ledger.getHouseholdAccount(h3.id);
 
-      // Run several operations
+      // Run a mixed sequence: grants (10+10), topups (50+30), transfers, all movements tracked
       c.ledger.transfer("TOPUP", null, a1.id, 50, "topup h1");
       c.ledger.transfer("TRANSFER", a1.id, a2.id, 20, "transfer");
       c.ledger.transfer("TOPUP", null, a3.id, 30, "topup h3");
 
-      // Check that we can verify the invariant (implementation may vary)
+      // Balances: h1=40 (10+50-20), h2=20 (0+20), h3=40 (10+30) = 100
+      // Supply created: 10+10 (grants) + 50+30 (topups) = 100
+      // Invariant: 100 = 100, strictly true
       const invariant = c.ledger.checkMoneyInvariant();
-      expect(invariant).toHaveProperty("ok");
-      expect(invariant).toHaveProperty("totalSupply");
-      expect(invariant).toHaveProperty("sumOfBalances");
-      expect(invariant.totalSupply).toBeGreaterThan(0);
-      expect(invariant.sumOfBalances).toBeGreaterThan(0);
+      expect(invariant.ok).toBe(true);
+      expect(invariant.totalSupply).toBeCloseTo(invariant.sumOfBalances, 5);
     });
   });
 

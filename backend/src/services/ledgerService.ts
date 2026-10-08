@@ -70,13 +70,13 @@ export class LedgerService {
         createdAt: Date.now(),
       });
 
-      // Create grid storage
+      // Create grid storage (starts at 0; funding happens in Phase 3 as a treasury transfer)
       this.accounts.insert({
         id: GRID_STORAGE_ACCOUNT,
         kind: "grid_storage",
         householdId: null,
         label: "Grid storage",
-        balance: env.gridStorageInitialTec ?? 500,
+        balance: 0,
         reservedBalance: 0,
         createdAt: Date.now(),
       });
