@@ -272,6 +272,35 @@ describe("LedgerService — Phase 0 foundations", () => {
     });
   });
 
+  describe("Block sealing", () => {
+    it("seals pending transactions into a blockchain block", async () => {
+      const c = buildTestContainer();
+      const h1 = await seedHousehold(c, { type: "consumer" });
+      const h2 = await seedHousehold(c, { type: "consumer" });
+      const a1 = c.ledger.getHouseholdAccount(h1.id);
+      const a2 = c.ledger.getHouseholdAccount(h2.id);
+
+      const tx1 = c.ledger.transfer("TRANSFER", a1.id, a2.id, 5, "test1");
+      const tx2 = c.ledger.transfer("TRANSFER", a1.id, a2.id, 3, "test2");
+
+      // Before sealing, transactions have no blockIndex
+      expect(tx1.blockIndex).toBeNull();
+      expect(tx2.blockIndex).toBeNull();
+
+      // Seal the block
+      c.ledger.sealBlock([tx1.id, tx2.id]);
+
+      // After sealing, they should be linked to a blockchain block
+      const history1 = c.ledger.getHistory(a1.id);
+      const sealed1 = history1.find(t => t.id === tx1.id);
+      const sealed2 = history1.find(t => t.id === tx2.id);
+
+      expect(sealed1?.blockIndex).not.toBeNull();
+      expect(sealed2?.blockIndex).not.toBeNull();
+      expect(sealed1?.blockIndex).toBe(sealed2?.blockIndex); // Same block
+    });
+  });
+
   describe("Ledger history and status", () => {
     it("retrieves account transaction history in reverse chronological order", async () => {
       const c = buildTestContainer();

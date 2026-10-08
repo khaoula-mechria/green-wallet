@@ -5,6 +5,7 @@ import { LedgerTransactionRepository } from "../db/repositories/ledgerTransactio
 import type { Account, LedgerTransaction, LedgerTxType, LedgerAsset, AccountKind } from "../domain/types.js";
 import { ValidationError, NotFoundError } from "../utils/errors.js";
 import { env } from "../config/env.js";
+import { mineBlock } from "../blockchain/hash.js";
 
 const OPERATOR_ACCOUNT = "0.0.1000";
 const TREASURY_ACCOUNT = "0.0.1001";
@@ -199,6 +200,40 @@ export class LedgerService {
   }
 
   /**
+   * Convert a ledger transaction to its public form with account labels and household IDs.
+   */
+  toLedgerTxPublic(tx: LedgerTransaction) {
+    let fromLabel: string | null = null;
+    let fromHouseholdId: string | null = null;
+    if (tx.fromAccountId) {
+      const fromAccount = this.accounts.findById(tx.fromAccountId);
+      if (fromAccount) {
+        fromLabel = fromAccount.label;
+        fromHouseholdId = fromAccount.householdId;
+      }
+    }
+
+    let toLabel: string | null = null;
+    let toHouseholdId: string | null = null;
+    if (tx.toAccountId) {
+      const toAccount = this.accounts.findById(tx.toAccountId);
+      if (toAccount) {
+        toLabel = toAccount.label;
+        toHouseholdId = toAccount.householdId;
+      }
+    }
+
+    return {
+      ...tx,
+      fromLabel,
+      toLabel,
+      fromHouseholdId,
+      toHouseholdId,
+      simTime: 0,
+    };
+  }
+
+  /**
    * Money invariant check: sum of all balances should equal total supply.
    * Returns {ok, totalSupply, sumOfBalances} for diagnostics.
    */
@@ -225,6 +260,51 @@ export class LedgerService {
     const treasury = this.accounts.findById(TREASURY_ACCOUNT);
     if (!treasury) throw new NotFoundError("Treasury account");
     return this.round2(treasury.balance);
+  }
+
+  /**
+   * Seal pending ledger transactions into a blockchain block.
+   * Called at end of measurement/trade settlement batches.
+   * Wires ledger_transactions.blockIndex to blockchain_blocks.index.
+   */
+  sealBlock(txIds: string[]): void {
+    if (txIds.length === 0) return;
+
+    // Get the ledger transactions to seal (verify they exist and are pending)
+    const txsToSeal = this.db
+      .prepare("SELECT id FROM ledger_transactions WHERE id IN (" + txIds.map(() => "?").join(",") + ") AND blockIndex IS NULL")
+      .all(...txIds) as { id: string }[];
+
+    if (txsToSeal.length === 0) return; // Nothing to seal
+
+    // Get latest block info (idx is the SQLite column name for block index)
+    const latestBlockRow = this.db
+      .prepare("SELECT MAX(idx) as maxIdx, hash FROM blockchain_blocks")
+      .get() as { maxIdx: number | null; hash: string } | undefined;
+
+    const nextIndex = (latestBlockRow?.maxIdx ?? -1) + 1;
+    const previousHash = latestBlockRow?.hash || "0".repeat(64);
+
+    // Mine a block with these transaction IDs
+    const baseBlock = {
+      index: nextIndex,
+      timestamp: Date.now(),
+      previousHash,
+      transactionIds: txsToSeal.map(tx => tx.id),
+    };
+
+    const { hash, nonce } = mineBlock(baseBlock);
+
+    // Insert into blockchain_blocks (idx is auto-increment PRIMARY KEY)
+    this.db.prepare(`
+      INSERT INTO blockchain_blocks (timestamp, previousHash, transactionIds, nonce, hash)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(baseBlock.timestamp, previousHash, JSON.stringify(baseBlock.transactionIds), nonce, hash);
+
+    // Update ledger transactions with their block index
+    this.db.prepare(`
+      UPDATE ledger_transactions SET blockIndex = ? WHERE id IN (${txsToSeal.map(() => "?").join(",")})
+    `).run(nextIndex, ...txsToSeal.map(tx => tx.id));
   }
 
   /**

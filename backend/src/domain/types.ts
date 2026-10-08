@@ -63,6 +63,15 @@ export interface LedgerTransaction {
   relatedTradeId: string | null;
 }
 
+// Public view of ledger transaction with labels and household IDs for API responses
+export interface LedgerTransactionPublic extends LedgerTransaction {
+  fromLabel: string | null;
+  toLabel: string | null;
+  fromHouseholdId: string | null;
+  toHouseholdId: string | null;
+  simTime: number; // Simulated time offset for demo (0 for now)
+}
+
 export type PublicHousehold = Omit<Household, "passwordHash" | "hederaPrivateKeyEncrypted">;
 
 export interface EnergyMeasurement {

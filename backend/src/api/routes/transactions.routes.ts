@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Container } from "../../container.js";
-import { asyncRoute } from "../../middleware/errorHandler.js";
 import type { LedgerTransaction } from "../../domain/types.js";
+import { asyncRoute } from "../../middleware/errorHandler.js";
 
 export function transactionsRoutes(c: Container): Router {
   const router = Router();
@@ -13,12 +13,15 @@ export function transactionsRoutes(c: Container): Router {
       const asset = req.query.asset ? String(req.query.asset) : "TEC";
 
       // For Phase 0, only TEC transactions are available (no certificates yet)
-      let data: LedgerTransaction[] = [];
+      let txs: LedgerTransaction[] = [];
       if (asset === "TEC" || asset === "ALL") {
-        data = c.tokens.getAllHistory();
+        txs = c.tokens.getAllHistory();
       }
 
-      res.json({ success: true, data: data.slice(0, limit) });
+      // Convert to public form with labels and household IDs
+      const data = txs.map(tx => c.ledger.toLedgerTxPublic(tx)).slice(0, limit);
+
+      res.json({ success: true, data });
     })
   );
 
