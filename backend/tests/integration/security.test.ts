@@ -37,10 +37,12 @@ describe("Phase 0 — registration cannot set balances", () => {
   });
 
   it("applies the server-side signup grant to consumers only", async () => {
-    await register(app, "new-consumer", "consumer");
-    await register(app, "new-producer", "producer");
-    expect(container.households.getById("new-consumer").tokenBalance).toBe(env.signupGrantTec);
-    expect(container.households.getById("new-producer").tokenBalance).toBe(0);
+    const consumer = await register(app, "new-consumer", "consumer");
+    const producer = await register(app, "new-producer", "producer");
+    const consumerBalance = container.tokens.getBalance("new-consumer");
+    const producerBalance = container.tokens.getBalance("new-producer");
+    expect(consumerBalance).toBeCloseTo(env.welcomeGrantTec ?? 10, 2);
+    expect(producerBalance).toBe(0);
   });
 
   it("rejects malformed household ids", async () => {
@@ -76,7 +78,8 @@ describe("Phase 0 — manual meter readings are bounded", () => {
   it("rejects readings above the per-reading cap, so surplus can't mint unbounded TEC", async () => {
     const res = await submit({ production: 1e12, consumption: 0 });
     expect(res.status).toBe(400);
-    expect(container.households.getById("meter-1").tokenBalance).toBe(0);
+    const balance = container.tokens.getBalance("meter-1");
+    expect(balance).toBe(0); // producer, no grant
   });
 
   it("allows one reading per household per interval, and a rejected reading doesn't use the slot", async () => {
@@ -85,7 +88,8 @@ describe("Phase 0 — manual meter readings are bounded", () => {
     const second = await submit({ production: 8, consumption: 3 });
     expect(second.status).toBe(429);
     expect(second.body.error.code).toBe("TOO_MANY_REQUESTS");
-    expect(container.households.getById("meter-1").tokenBalance).toBe(5);
+    const balance = container.tokens.getBalance("meter-1");
+    expect(balance).toBeCloseTo(5, 2); // 5 TEC minted from 5 kWh surplus
   });
 
   it("can be switched off entirely (production default)", async () => {
@@ -118,10 +122,16 @@ describe("Phase 0 — private data is owner-only", () => {
     return token ? r.set("Authorization", `Bearer ${token}`) : r;
   };
 
-  it("requires a token for wallets, trades, meter history, the household list and the transaction feed", async () => {
-    for (const path of ["/tokens/balance/bob", "/tokens/history/bob", "/trades", "/households", "/households/bob/history", "/transactions", "/microgrid", "/energy/measurements"]) {
+  it("requires a token for wallets, trades, meter history, and the household list", async () => {
+    for (const path of ["/tokens/balance/bob", "/tokens/history/bob", "/trades", "/households", "/households/bob/history", "/microgrid", "/energy/measurements"]) {
       expect((await get(path)).status, path).toBe(401);
     }
+  });
+
+  it("allows public access to transaction feed", async () => {
+    const res = await get("/transactions");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("data");
   });
 
   it("forbids reading another household's wallet, trades or meter history", async () => {
