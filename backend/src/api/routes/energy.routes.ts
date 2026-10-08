@@ -45,7 +45,7 @@ export function energyRoutes(c: Container): Router {
 
   // Authenticated households submit their own meter readings; this is the
   // manual equivalent of what the simulation does automatically each tick.
-  // Self-reported readings are untrusted (surplus is minted into TEC), so this
+  // Self-reported readings are untrusted (production earns green certificates), so this
   // is disabled by default in production until real, signed meter data exists.
   router.post(
     "/measurements",
@@ -60,7 +60,7 @@ export function energyRoutes(c: Container): Router {
     asyncRoute(async (req, res) => {
       const { production, consumption } = parseBody(measurementSchema, req.body);
       const householdId = req.auth!.householdId;
-      const result = await c.measurements.record(householdId, production, consumption);
+      const result = await c.measurements.record(householdId, production, consumption, "manual");
       res.status(201).json({ success: true, data: result });
     })
   );

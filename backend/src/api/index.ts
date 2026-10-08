@@ -9,6 +9,7 @@ import { tokensRoutes } from "./routes/tokens.routes.js";
 import { walletRoutes } from "./routes/wallet.routes.js";
 import { transactionsRoutes } from "./routes/transactions.routes.js";
 import { blockchainRoutes } from "./routes/blockchain.routes.js";
+import { gridRoutes } from "./routes/grid.routes.js";
 import { dashboardRoutes, microgridRoutes } from "./routes/dashboard.routes.js";
 
 export function apiRouter(c: Container): Router {
@@ -23,6 +24,7 @@ export function apiRouter(c: Container): Router {
   router.use("/wallet", walletRoutes(c));
   router.use("/transactions", transactionsRoutes(c));
   router.use("/blockchain", blockchainRoutes(c));
+  router.use("/grid", gridRoutes(c));
   router.use("/dashboard", dashboardRoutes(c));
   router.use("/microgrid", microgridRoutes(c));
 

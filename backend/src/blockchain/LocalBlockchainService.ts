@@ -28,7 +28,7 @@ export class LocalBlockchainService implements BlockchainService {
   private ensureGenesisBlock(): void {
     if (this.repo.getLatestBlock()) return;
     const base = { index: 0, timestamp: Date.now(), previousHash: GENESIS_PREVIOUS_HASH, transactionIds: [], nonce: 0 };
-    const genesis: BlockchainBlock = { ...base, hash: computeBlockHash(base) };
+    const genesis: BlockchainBlock = { ...base, simTime: 0, hash: computeBlockHash(base) };
     this.repo.insertBlock(genesis);
   }
 

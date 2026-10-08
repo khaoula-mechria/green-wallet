@@ -14,3 +14,9 @@ export function parseBody<T>(schema: ZodType<T, ZodTypeDef, unknown>, body: unkn
   }
   return result.data;
 }
+
+/** `?limit=` as an integer in [1, max]; missing or malformed values fall back to `fallback`. */
+export function parseLimit(raw: unknown, fallback: number, max = 1000): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, max) : fallback;
+}

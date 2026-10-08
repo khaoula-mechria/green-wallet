@@ -8,19 +8,28 @@ export class BlockchainRepository {
   // are stored in ledger_transactions table instead. This class is kept for backwards
   // compatibility with the hash-chain blocks (blockchain_blocks table).
 
-  insertBlock(b: BlockchainBlock): void {
+  insertBlock(b: Omit<BlockchainBlock, "simTime"> & { simTime?: number }): void {
     this.db
       .prepare(
-        `INSERT INTO blockchain_blocks (idx, timestamp, previousHash, hash, nonce, transactionIds)
-         VALUES (@index, @timestamp, @previousHash, @hash, @nonce, @transactionIds)`
+        `INSERT INTO blockchain_blocks (idx, timestamp, simTime, previousHash, hash, nonce, transactionIds)
+         VALUES (@index, @timestamp, @simTime, @previousHash, @hash, @nonce, @transactionIds)`
       )
-      .run({ ...b, transactionIds: JSON.stringify(b.transactionIds) });
+      .run({ ...b, simTime: b.simTime ?? 0, transactionIds: JSON.stringify(b.transactionIds) });
   }
 
-  private mapRow(row: { idx: number; timestamp: number; previousHash: string; hash: string; nonce: number; transactionIds: string }): BlockchainBlock {
+  private mapRow(row: {
+    idx: number;
+    timestamp: number;
+    simTime: number;
+    previousHash: string;
+    hash: string;
+    nonce: number;
+    transactionIds: string;
+  }): BlockchainBlock {
     return {
       index: row.idx,
       timestamp: row.timestamp,
+      simTime: row.simTime,
       previousHash: row.previousHash,
       hash: row.hash,
       nonce: row.nonce,
@@ -40,6 +49,10 @@ export class BlockchainRepository {
       typeof this.mapRow
     >[0][];
     return rows.map((row) => this.mapRow(row));
+  }
+
+  count(): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM blockchain_blocks`).get() as { n: number }).n;
   }
 
   getBlockByIndex(index: number): BlockchainBlock | undefined {

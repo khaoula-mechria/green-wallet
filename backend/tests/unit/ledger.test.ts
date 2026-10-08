@@ -1,23 +1,34 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { buildTestContainer, seedHousehold } from "../testContainer.js";
+import { env } from "../../src/config/env.js";
+import { isBlockHashValid } from "../../src/blockchain/hash.js";
 
 describe("LedgerService — Phase 0 foundations", () => {
   describe("Account creation and bootstrap", () => {
-    it("bootstraps operator accounts on first call", () => {
+    it("funds the treasury, then grid storage from the treasury, through ledger transactions", () => {
       const c = buildTestContainer();
-      const treasury = c.ledger.treasuryBalance();
-      expect(treasury).toBe(10_000); // TREASURY_INITIAL_TEC default
+      expect(c.ledger.treasuryBalance()).toBe(env.treasuryInitialTec - env.gridStorageInitialTec);
+      expect(c.ledger.getBalance("0.0.1003").balance).toBe(env.gridStorageInitialTec);
+
+      const funding = c.ledger.getHistory("0.0.1003");
+      expect(funding).toHaveLength(1);
+      expect(funding[0]).toMatchObject({ type: "OPERATOR_FUNDING", fromAccountId: "0.0.1001", amount: env.gridStorageInitialTec });
+      expect(c.ledger.checkMoneyInvariant()).toEqual({ ok: true, totalSupply: env.treasuryInitialTec, sumOfBalances: env.treasuryInitialTec });
     });
 
-    it("creates household account with Hedera-style ID on registration", async () => {
+    it("bootstrap is idempotent", () => {
       const c = buildTestContainer();
-      const { household } = await c.auth.register({
-        name: "Test House",
-        type: "consumer",
-        location: "Test City",
-        password: "password123",
-      });
-      expect(household.hederaAccountId).toMatch(/^0\.0\.\d+$/);
+      const before = c.ledger.getStatus().transactionsCount;
+      c.ledger.bootstrap();
+      expect(c.ledger.getStatus().transactionsCount).toBe(before);
+      expect(c.ledger.treasuryBalance()).toBe(env.treasuryInitialTec - env.gridStorageInitialTec);
+    });
+
+    it("allocates household accounts from 0.0.4801 upward", async () => {
+      const c = buildTestContainer();
+      const reg = (name: string) => c.auth.register({ name, type: "consumer", location: "Test City", password: "password123" });
+      expect((await reg("First")).household.accountId).toBe("0.0.4801");
+      expect((await reg("Second")).household.accountId).toBe("0.0.4802");
     });
   });
 
@@ -123,17 +134,30 @@ describe("LedgerService — Phase 0 foundations", () => {
       const a2 = c.ledger.getHouseholdAccount(h2.id);
       const a3 = c.ledger.getHouseholdAccount(h3.id);
 
-      // Run a mixed sequence: grants (10+10), topups (50+30), transfers, all movements tracked
+      // Grants move existing treasury TEC; top-ups create TEC; cash-outs destroy it.
       c.ledger.transfer("TOPUP", null, a1.id, 50, "topup h1");
       c.ledger.transfer("TRANSFER", a1.id, a2.id, 20, "transfer");
       c.ledger.transfer("TOPUP", null, a3.id, 30, "topup h3");
+      c.ledger.transfer("CASHOUT", a3.id, null, 15, "cashout h3");
 
-      // Balances: h1=40 (10+50-20), h2=20 (0+20), h3=40 (10+30) = 100
-      // Supply created: 10+10 (grants) + 50+30 (topups) = 100
-      // Invariant: 100 = 100, strictly true
       const invariant = c.ledger.checkMoneyInvariant();
       expect(invariant.ok).toBe(true);
-      expect(invariant.totalSupply).toBeCloseTo(invariant.sumOfBalances, 5);
+      expect(invariant.totalSupply).toBe(env.treasuryInitialTec + 50 + 30 - 15);
+      expect(invariant.sumOfBalances).toBe(invariant.totalSupply);
+    });
+
+    it("money invariant covers the whole ledger, not just the latest page of transactions", async () => {
+      const c = buildTestContainer();
+      const h1 = await seedHousehold(c, { type: "consumer" });
+      const h2 = await seedHousehold(c, { type: "consumer" });
+      const a1 = c.ledger.getHouseholdAccount(h1.id);
+      const a2 = c.ledger.getHouseholdAccount(h2.id);
+
+      for (let i = 0; i < 220; i++) c.ledger.transfer("TOPUP", null, i % 2 ? a1.id : a2.id, 1.37, `topup ${i}`);
+
+      const invariant = c.ledger.checkMoneyInvariant();
+      expect(invariant.ok).toBe(true);
+      expect(invariant.totalSupply).toBeCloseTo(env.treasuryInitialTec + 220 * 1.37, 2);
     });
   });
 
@@ -273,7 +297,7 @@ describe("LedgerService — Phase 0 foundations", () => {
   });
 
   describe("Block sealing", () => {
-    it("seals pending transactions into a blockchain block", async () => {
+    it("seals every transaction into its own block on a valid hash chain", async () => {
       const c = buildTestContainer();
       const h1 = await seedHousehold(c, { type: "consumer" });
       const h2 = await seedHousehold(c, { type: "consumer" });
@@ -283,21 +307,28 @@ describe("LedgerService — Phase 0 foundations", () => {
       const tx1 = c.ledger.transfer("TRANSFER", a1.id, a2.id, 5, "test1");
       const tx2 = c.ledger.transfer("TRANSFER", a1.id, a2.id, 3, "test2");
 
-      // Before sealing, transactions have no blockIndex
-      expect(tx1.blockIndex).toBeNull();
-      expect(tx2.blockIndex).toBeNull();
+      expect(tx1.blockIndex).not.toBeNull();
+      expect(tx2.blockIndex).toBe(tx1.blockIndex! + 1);
+      expect(c.blockchain.getBlock(tx1.blockIndex!)!.transactionIds).toEqual([tx1.id]);
+      expect(c.blockchain.getBlock(tx2.blockIndex!)!.transactionIds).toEqual([tx2.id]);
 
-      // Seal the block
-      c.ledger.sealBlock([tx1.id, tx2.id]);
+      const chain = c.blockchain.getChain();
+      expect(chain[0].index).toBe(0); // genesis comes before the bootstrap transactions
+      for (let i = 1; i < chain.length; i++) {
+        expect(chain[i].index).toBe(i);
+        expect(chain[i].previousHash).toBe(chain[i - 1].hash);
+        expect(isBlockHashValid(chain[i])).toBe(true);
+      }
+      expect(c.ledger.getStatus().latestHash).toBe(chain.at(-1)!.hash);
+    });
 
-      // After sealing, they should be linked to a blockchain block
-      const history1 = c.ledger.getHistory(a1.id);
-      const sealed1 = history1.find(t => t.id === tx1.id);
-      const sealed2 = history1.find(t => t.id === tx2.id);
+    it("rolls back the block when the transfer fails", async () => {
+      const c = buildTestContainer();
+      const h = await seedHousehold(c, { type: "consumer" });
+      const blocksBefore = c.blockchain.getChain().length;
 
-      expect(sealed1?.blockIndex).not.toBeNull();
-      expect(sealed2?.blockIndex).not.toBeNull();
-      expect(sealed1?.blockIndex).toBe(sealed2?.blockIndex); // Same block
+      expect(() => c.ledger.transfer("CASHOUT", c.ledger.getHouseholdAccount(h.id).id, null, 999, "too much")).toThrow(/insufficient/);
+      expect(c.blockchain.getChain()).toHaveLength(blocksBefore);
     });
   });
 
@@ -323,15 +354,37 @@ describe("LedgerService — Phase 0 foundations", () => {
       expect(types[2]).toBe("TOPUP");
     });
 
-    it("reports ledger status with block and transaction counts", () => {
+    it("reports ledger status in the LedgerStatus contract shape", () => {
       const c = buildTestContainer();
       const status = c.ledger.getStatus();
 
-      expect(status.mode).toBe("simulated-hedera");
-      expect(status.operatorAccountId).toBe("0.0.1000");
-      expect(status.blocksCount).toBeGreaterThan(0);
-      expect(status.transactionsCount).toBeGreaterThan(0);
-      expect(status.totalFeesHbar).toBeGreaterThan(0);
+      expect(status).toEqual({
+        mode: "simulated-hedera",
+        network: "testnet (simulated)",
+        operatorAccountId: "0.0.1000",
+        tokenIds: { TEC: "0.0.5001", SOLAR: "0.0.5002", WIND: "0.0.5003" },
+        blocksCount: 3, // genesis + treasury funding + grid storage funding
+        transactionsCount: 2,
+        totalFeesHbar: 2 * env.simulatedFeeHbar,
+        latestHash: c.blockchain.getChain().at(-1)!.hash,
+      });
+    });
+
+    it("maps transactions to the LedgerTx contract with labels and household ids", async () => {
+      const c = buildTestContainer();
+      const h = await seedHousehold(c, { type: "consumer", name: "Dar Amel" });
+      const account = c.ledger.getHouseholdAccount(h.id);
+      c.ledger.transfer("CASHOUT", account.id, null, 4, "cash-out");
+
+      const [cashout, grant] = c.ledger.toLedgerTxs(c.ledger.getHistory(account.id));
+      expect(grant).toMatchObject({ type: "WELCOME_GRANT", fromLabel: "Treasury", toLabel: "Dar Amel", householdIds: [h.id], simTime: 6 * 60 }); // day 1, 06:00
+      expect(cashout).toMatchObject({ type: "CASHOUT", fromLabel: "Dar Amel", toLabel: "Destroyed", householdIds: [h.id] });
+      expect(Object.keys(cashout).sort()).toEqual(
+        ["amount", "asset", "blockIndex", "feeHbar", "fromAccountId", "fromLabel", "householdIds", "id", "memo", "simTime", "timestamp", "toAccountId", "toLabel", "type"].sort()
+      );
+
+      const [created] = c.ledger.toLedgerTxs(c.ledger.getHistory("0.0.1001").filter((t) => t.fromAccountId === null));
+      expect(created).toMatchObject({ fromLabel: "Created", toLabel: "Treasury", householdIds: [] });
     });
   });
 });

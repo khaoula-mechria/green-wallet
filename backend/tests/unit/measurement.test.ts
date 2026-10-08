@@ -2,38 +2,46 @@ import { describe, it, expect } from "vitest";
 import { buildTestContainer, seedHousehold } from "../testContainer.js";
 
 describe("MeasurementService — surplus/deficit calculation", () => {
-  it("calculates a positive surplus and auto-mints TEC 1:1 against it", async () => {
+  it("certifies a producer's output and exports its surplus — no TEC is created", async () => {
     const c = buildTestContainer();
-    const producer = await seedHousehold(c, { type: "producer" }); // 0 TEC grant
+    const producer = await seedHousehold(c, { type: "producer" }); // no welcome grant
 
-    const { measurement, mintTx } = await c.measurements.record(producer.id, 8, 3);
+    const { measurement, certificateTx, retired } = await c.measurements.record(producer.id, 8, 3);
 
     expect(measurement.production).toBe(8);
     expect(measurement.consumption).toBe(3);
     expect(measurement.surplus).toBe(5);
 
-    expect(mintTx).not.toBeNull();
-    expect(mintTx!.amount).toBe(5);
+    // All 8 kWh produced are certified; the 3 kWh used on the spot are retired at once.
+    expect(certificateTx).not.toBeNull();
+    expect(certificateTx!.type).toBe("CERT_ISSUE");
+    expect(certificateTx!.asset).toBe("SOLAR");
+    expect(certificateTx!.amount).toBe(8);
+    expect(retired).toEqual({ solar: 3, wind: 0 });
 
-    const updated = c.households.getById(producer.id);
-    expect(updated.energyBalance).toBe(5);
-    const balance = c.tokens.getBalance(producer.id);
-    expect(balance).toBeCloseTo(5, 2); // 5 TEC from MINT
+    // A producer has no storage: the 5 kWh surplus is exported at the floor price, and its
+    // certificates go to the utility with it. Producing earns proof, not TEC.
+    expect(measurement.flow).toMatchObject({ selfUse: 3, exported: 5, toBattery: 0, settled: true });
+    const wallet = c.tokens.wallet(producer.id);
+    expect(wallet.certificates).toEqual({ solar: 0, wind: 0 });
+    expect(wallet.utility).toEqual({ importedKwh: 0, importCost: 0, exportedKwh: 5, exportCredit: 0.25, net: 0.25 });
+    expect(c.tokens.getBalance(producer.id)).toBe(0);
   });
 
-  it("calculates a deficit and does not mint any TEC", async () => {
+  it("imports a deficit with nothing stored: grey energy on the utility bill, no TEC", async () => {
     const c = buildTestContainer();
     const consumer = await seedHousehold(c, { type: "consumer" }); // 10 TEC grant
 
-    const { measurement, mintTx } = await c.measurements.record(consumer.id, 0, 4);
+    const { measurement, certificateTx, retired } = await c.measurements.record(consumer.id, 0, 4);
 
     expect(measurement.surplus).toBe(-4);
-    expect(mintTx).toBeNull();
+    expect(certificateTx).toBeNull();
+    expect(retired).toEqual({ solar: 0, wind: 0 });
 
-    const updated = c.households.getById(consumer.id);
-    expect(updated.energyBalance).toBe(0);
-    const balance = c.tokens.getBalance(consumer.id);
-    expect(balance).toBeCloseTo(10, 2); // Still has welcome grant, no mint
+    expect(measurement.flow).toMatchObject({ imported: 4 });
+    expect(c.tokens.wallet(consumer.id).utility).toMatchObject({ importedKwh: 4, importCost: 1.2, net: -1.2 });
+    expect(c.tokens.getBalance(consumer.id)).toBeCloseTo(10, 2); // the utility bills in real money, not TEC
+    expect(c.tokens.wallet(consumer.id).greenShare).toEqual({ solarKwh: 0, windKwh: 0, greyKwh: 4, percentGreen: 0 });
   });
 
   it("rejects negative production or consumption", async () => {

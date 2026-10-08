@@ -1,131 +1,111 @@
 import type { Database } from "better-sqlite3";
-import { v4 as uuid } from "uuid";
 import { AccountRepository } from "../db/repositories/accountRepository.js";
 import { LedgerTransactionRepository } from "../db/repositories/ledgerTransactionRepository.js";
-import type { Account, LedgerTransaction, LedgerTxType, LedgerAsset, AccountKind } from "../domain/types.js";
+import { BlockchainRepository } from "../db/repositories/blockchainRepository.js";
+import type {
+  Account,
+  CertificateAmounts,
+  CertificateAsset,
+  LedgerTransaction,
+  LedgerTx,
+  LedgerTxType,
+  LedgerAsset,
+  LedgerStatus,
+} from "../domain/types.js";
 import { ValidationError, NotFoundError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { mineBlock } from "../blockchain/hash.js";
 
-const OPERATOR_ACCOUNT = "0.0.1000";
-const TREASURY_ACCOUNT = "0.0.1001";
-const CLEARING_ACCOUNT = "0.0.1002";
-const GRID_STORAGE_ACCOUNT = "0.0.1003";
+export const OPERATOR_ACCOUNT = "0.0.1000";
+export const TREASURY_ACCOUNT = "0.0.1001";
+export const CLEARING_ACCOUNT = "0.0.1002";
+export const GRID_STORAGE_ACCOUNT = "0.0.1003";
+/** The main utility grid: receives the certificates of exported energy (DESIGN.md §2.3). Never holds TEC. */
+export const UTILITY_ACCOUNT = "0.0.1004";
 
-const RESERVED_ACCOUNTS = [OPERATOR_ACCOUNT, TREASURY_ACCOUNT, CLEARING_ACCOUNT, GRID_STORAGE_ACCOUNT];
+const FIRST_HOUSEHOLD_ACCOUNT = 4801;
+const TOKEN_IDS = { TEC: "0.0.5001", SOLAR: "0.0.5002", WIND: "0.0.5003" };
+const GENESIS_PREVIOUS_HASH = "0".repeat(64);
+
+export type LedgerHistoryFilter = "ALL" | "TEC" | "CERT" | "RECORD";
 
 /**
- * Core ledger service: manages account balances, TEC transfers, and transaction recording.
- * All money movements flow through here. Every operation is atomic and recorded to the ledger
- * with Hedera-style IDs and fees.
+ * Core ledger service: account balances, TEC transfers, green certificates and
+ * transaction recording. Every movement is atomic, gets a Hedera-style ID and a
+ * simulated fee, and is sealed into its own hash-chained block.
+ *
+ * TEC and certificates follow the same rules: a null `from` creates (TEC top-up,
+ * certificate issue), a null `to` destroys (cash-out, certificate retirement).
  */
 export class LedgerService {
   private readonly accounts: AccountRepository;
   private readonly ledger: LedgerTransactionRepository;
-  private txSequence: number = 0;
+  private readonly blocks: BlockchainRepository;
+  private txSequence: number;
 
-  constructor(private readonly db: Database) {
+  constructor(
+    private readonly db: Database,
+    private readonly clock: { simTime(): number } = { simTime: () => 0 }
+  ) {
     this.accounts = new AccountRepository(db);
     this.ledger = new LedgerTransactionRepository(db);
+    this.blocks = new BlockchainRepository(db);
+    // Continue the sequence across restarts so IDs minted in the same second never collide.
+    this.txSequence = this.ledger.count();
   }
 
-  /**
-   * Bootstrap: creates operator accounts and funds the treasury.
-   * Idempotent — safe to call on every boot.
-   */
+  /** Creates the operator accounts and funds treasury and grid storage. Idempotent. */
   bootstrap(): void {
-    const operatorExist = this.accounts.findById(OPERATOR_ACCOUNT);
-    if (operatorExist) return;
+    if (this.accounts.findById(OPERATOR_ACCOUNT)) return;
 
     const run = this.db.transaction(() => {
-      // Create operator identity (not funded, just exists)
-      this.accounts.insert({
-        id: OPERATOR_ACCOUNT,
-        kind: "household",
-        householdId: null,
-        label: "Operator",
-        balance: 0,
-        reservedBalance: 0,
-        createdAt: Date.now(),
-      });
+      const now = Date.now();
+      const operatorAccounts: Array<Pick<Account, "id" | "kind" | "label">> = [
+        { id: OPERATOR_ACCOUNT, kind: "household", label: "Operator" },
+        { id: TREASURY_ACCOUNT, kind: "treasury", label: "Treasury" },
+        { id: CLEARING_ACCOUNT, kind: "clearing", label: "Clearing" },
+        { id: GRID_STORAGE_ACCOUNT, kind: "grid_storage", label: "Grid storage" },
+        { id: UTILITY_ACCOUNT, kind: "utility", label: "Main utility grid" },
+      ];
+      for (const a of operatorAccounts) {
+        this.accounts.insert({ ...a, householdId: null, balance: 0, reservedBalance: 0, solarBalance: 0, windBalance: 0, createdAt: now });
+      }
 
-      // Create treasury
-      this.accounts.insert({
-        id: TREASURY_ACCOUNT,
-        kind: "treasury",
-        householdId: null,
-        label: "Treasury",
-        balance: env.treasuryInitialTec,
-        reservedBalance: 0,
-        createdAt: Date.now(),
-      });
-
-      // Create clearing
-      this.accounts.insert({
-        id: CLEARING_ACCOUNT,
-        kind: "clearing",
-        householdId: null,
-        label: "Clearing",
-        balance: 0,
-        reservedBalance: 0,
-        createdAt: Date.now(),
-      });
-
-      // Create grid storage (starts at 0; funding happens in Phase 3 as a treasury transfer)
-      this.accounts.insert({
-        id: GRID_STORAGE_ACCOUNT,
-        kind: "grid_storage",
-        householdId: null,
-        label: "Grid storage",
-        balance: 0,
-        reservedBalance: 0,
-        createdAt: Date.now(),
-      });
-
-      // Record the initial funding to the ledger
       if (env.treasuryInitialTec > 0) {
-        this.recordTxUnsafe(
+        this.transfer("OPERATOR_FUNDING", null, TREASURY_ACCOUNT, env.treasuryInitialTec, "Initial TEC supply (token creation)");
+      }
+      if (env.gridStorageInitialTec > 0) {
+        this.transfer(
           "OPERATOR_FUNDING",
-          "TEC",
-          null,
           TREASURY_ACCOUNT,
-          env.treasuryInitialTec,
-          "Operator funding"
+          GRID_STORAGE_ACCOUNT,
+          env.gridStorageInitialTec,
+          "Grid storage trading account funding"
         );
       }
     });
     run();
   }
 
-  /**
-   * Create a household account with a given ID. Called from AuthService during registration.
-   * Returns the new account.
-   */
   createHouseholdAccount(householdId: string, label: string): Account {
-    const nextNum = this.getNextAccountNumber();
-    const accountId = `0.0.${nextNum}`;
-
     const account: Account = {
-      id: accountId,
+      id: `0.0.${this.nextHouseholdAccountNumber()}`,
       kind: "household",
       householdId,
       label,
       balance: 0,
       reservedBalance: 0,
+      solarBalance: 0,
+      windBalance: 0,
       createdAt: Date.now(),
     };
-
     this.accounts.insert(account);
     return account;
   }
 
   /**
-   * Atomically transfer TEC from one account to another.
-   * - from/to can be null: null from = created (inflation), null to = destroyed (deflation).
-   * - Checks available (balance - reserved) for non-null from.
-   * - Rounds to cents (2 decimals) before and after.
-   * - Records a ledger transaction with Hedera-style ID and simulated fee.
-   * - Never leaves negative balances or violates invariants.
+   * Atomically moves TEC. A null `from` creates supply, a null `to` destroys it.
+   * The sender's available balance (balance - reserved) must cover the amount.
    */
   transfer(
     type: LedgerTxType,
@@ -135,8 +115,8 @@ export class LedgerService {
     memo: string = "",
     relatedTradeId: string | null = null
   ): LedgerTransaction {
-    const a = this.round2(amount);
-    if (a <= 0) throw new ValidationError("transfer amount must be positive");
+    const a = round2(amount);
+    if (!(a > 0)) throw new ValidationError("transfer amount must be positive");
 
     const run = this.db.transaction(() => {
       if (fromAccountId !== null) {
@@ -152,218 +132,211 @@ export class LedgerService {
       }
 
       if (toAccountId !== null) {
-        const to = this.accounts.findById(toAccountId);
-        if (!to) throw new NotFoundError("To account");
+        if (!this.accounts.findById(toAccountId)) throw new NotFoundError("To account");
         this.accounts.updateBalance(toAccountId, a);
       }
 
-      return this.recordTxUnsafe(type, "TEC", fromAccountId, toAccountId, a, memo, relatedTradeId);
+      return this.recordTx(type, "TEC", fromAccountId, toAccountId, a, memo, relatedTradeId);
     });
 
     return run();
   }
 
-  /**
-   * Get the balance and reserved amount of an account. Raises NotFoundError if missing.
-   */
+  /** Issues certificates for energy produced by the account's owner (DESIGN.md §2.2). */
+  issueCertificate(accountId: string, asset: CertificateAsset, kwh: number, memo: string): LedgerTransaction | null {
+    return this.moveCertificate("CERT_ISSUE", asset, null, accountId, kwh, memo, null);
+  }
+
+  /** Moves certificates along with sold energy. */
+  transferCertificate(
+    fromAccountId: string,
+    toAccountId: string,
+    asset: CertificateAsset,
+    kwh: number,
+    memo: string,
+    relatedTradeId: string | null = null
+  ): LedgerTransaction | null {
+    return this.moveCertificate("CERT_TRANSFER", asset, fromAccountId, toAccountId, kwh, memo, relatedTradeId);
+  }
+
+  /** Retires certificates when their energy is consumed, so they can't be claimed twice. */
+  retireCertificate(accountId: string, asset: CertificateAsset, kwh: number, memo: string): LedgerTransaction | null {
+    return this.moveCertificate("CERT_RETIRE", asset, accountId, null, kwh, memo, null);
+  }
+
+  getCertificates(accountId: string): CertificateAmounts {
+    const account = this.accounts.findById(accountId);
+    if (!account) throw new NotFoundError("Account");
+    return { solar: round2(account.solarBalance), wind: round2(account.windBalance) };
+  }
+
   getBalance(accountId: string): { balance: number; reserved: number; available: number } {
     const account = this.accounts.findById(accountId);
     if (!account) throw new NotFoundError("Account");
     return {
-      balance: this.round2(account.balance),
-      reserved: this.round2(account.reservedBalance),
-      available: this.round2(account.balance - account.reservedBalance),
+      balance: round2(account.balance),
+      reserved: round2(account.reservedBalance),
+      available: round2(account.balance - account.reservedBalance),
     };
   }
 
-  /**
-   * Get the account for a household. Raises NotFoundError if missing.
-   */
   getHouseholdAccount(householdId: string): Account {
     const account = this.accounts.findByHouseholdId(householdId);
     if (!account) throw new NotFoundError("Household account");
     return account;
   }
 
-  /**
-   * List ledger transactions for an account (most recent first).
-   */
+  /** Transactions touching an account, most recent first. */
   getHistory(accountId: string, limit = 100): LedgerTransaction[] {
     return this.ledger.findByAccountId(accountId, limit);
   }
 
-  /**
-   * List all ledger transactions (most recent first, TEC only for now).
-   */
-  getAllHistory(limit = 200): LedgerTransaction[] {
-    return this.ledger.findByAsset("TEC", limit);
+  /** All transactions for the public feed, most recent first. */
+  getAllHistory(limit = 200, filter: LedgerHistoryFilter = "ALL"): LedgerTransaction[] {
+    switch (filter) {
+      case "ALL":
+        return this.ledger.findAll(limit);
+      case "CERT":
+        return this.ledger.findByAssets(["SOLAR", "WIND"], limit);
+      default:
+        return this.ledger.findByAsset(filter, limit);
+    }
   }
 
-  /**
-   * Convert a ledger transaction to its public form with account labels and household IDs.
-   */
-  toLedgerTxPublic(tx: LedgerTransaction) {
-    let fromLabel: string | null = null;
-    let fromHouseholdId: string | null = null;
-    if (tx.fromAccountId) {
-      const fromAccount = this.accounts.findById(tx.fromAccountId);
-      if (fromAccount) {
-        fromLabel = fromAccount.label;
-        fromHouseholdId = fromAccount.householdId;
-      }
-    }
+  /** Maps stored transactions to the API contract (labels and owning household ids). */
+  toLedgerTxs(txs: LedgerTransaction[]): LedgerTx[] {
+    const byId = new Map(this.accounts.findAll().map((a) => [a.id, a]));
+    const labelOf = (id: string) => byId.get(id)?.label ?? id;
 
-    let toLabel: string | null = null;
-    let toHouseholdId: string | null = null;
-    if (tx.toAccountId) {
-      const toAccount = this.accounts.findById(tx.toAccountId);
-      if (toAccount) {
-        toLabel = toAccount.label;
-        toHouseholdId = toAccount.householdId;
-      }
-    }
-
-    return {
-      ...tx,
-      fromLabel,
-      toLabel,
-      fromHouseholdId,
-      toHouseholdId,
-      simTime: 0,
-    };
+    return txs.map((tx) => ({
+      id: tx.id,
+      type: tx.type,
+      asset: tx.asset,
+      fromAccountId: tx.fromAccountId,
+      toAccountId: tx.toAccountId,
+      fromLabel: tx.fromAccountId === null ? (tx.asset === "TEC" ? "Created" : "Issued") : labelOf(tx.fromAccountId),
+      toLabel:
+        tx.toAccountId === null
+          ? tx.asset === "TEC"
+            ? "Destroyed"
+            : tx.asset === "RECORD"
+              ? "Ledger record"
+              : "Retired"
+          : labelOf(tx.toAccountId),
+      amount: tx.amount,
+      timestamp: tx.timestamp,
+      simTime: tx.simTime,
+      feeHbar: tx.feeHbar,
+      memo: tx.memo,
+      blockIndex: tx.blockIndex,
+      householdIds: [tx.fromAccountId, tx.toAccountId]
+        .map((id) => (id ? byId.get(id)?.householdId : null))
+        .filter((h): h is string => Boolean(h)),
+    }));
   }
 
-  /**
-   * Money invariant check: sum of all balances should equal total supply.
-   * Returns {ok, totalSupply, sumOfBalances} for diagnostics.
-   */
+  /** Σ account balances must equal TEC created minus TEC destroyed. */
   checkMoneyInvariant(): { ok: boolean; totalSupply: number; sumOfBalances: number } {
-    const accounts = this.accounts.findAll();
-    const sumOfBalances = this.round2(accounts.reduce((sum, a) => sum + a.balance, 0));
-
-    const mintTxs = this.ledger.findByAsset("TEC");
-    let totalSupply = 0;
-    for (const tx of mintTxs) {
-      if (tx.fromAccountId === null) totalSupply += tx.amount; // created
-      if (tx.toAccountId === null) totalSupply -= tx.amount; // destroyed
-    }
-    totalSupply = this.round2(totalSupply);
-
-    const ok = Math.abs(totalSupply - sumOfBalances) < 1e-6;
-    return { ok, totalSupply, sumOfBalances };
+    const sumOfBalances = round2(this.accounts.sumBalances());
+    const { created, destroyed } = this.ledger.createdAndDestroyed("TEC");
+    const totalSupply = round2(created - destroyed);
+    return { ok: Math.abs(totalSupply - sumOfBalances) < 0.005, totalSupply, sumOfBalances };
   }
 
-  /**
-   * Get treasury account balance.
-   */
+  /** DESIGN.md §9.4: certificates issued = held + retired (+ handed to the utility, Phase 2). */
+  checkCertificateInvariant(): { ok: boolean; issued: number; accounted: number } {
+    let issued = 0;
+    let accounted = 0;
+    for (const asset of ["SOLAR", "WIND"] as const) {
+      const { created, destroyed } = this.ledger.createdAndDestroyed(asset);
+      issued += created;
+      accounted += this.accounts.sumCertificateBalances(asset) + destroyed;
+    }
+    return { ok: Math.abs(issued - accounted) < 0.005, issued: round2(issued), accounted: round2(accounted) };
+  }
+
   treasuryBalance(): number {
     const treasury = this.accounts.findById(TREASURY_ACCOUNT);
     if (!treasury) throw new NotFoundError("Treasury account");
-    return this.round2(treasury.balance);
+    return round2(treasury.balance);
   }
 
-  /**
-   * Seal pending ledger transactions into a blockchain block.
-   * Called at end of measurement/trade settlement batches.
-   * Wires ledger_transactions.blockIndex to blockchain_blocks.index.
-   */
-  sealBlock(txIds: string[]): void {
-    if (txIds.length === 0) return;
-
-    // Get the ledger transactions to seal (verify they exist and are pending)
-    const txsToSeal = this.db
-      .prepare("SELECT id FROM ledger_transactions WHERE id IN (" + txIds.map(() => "?").join(",") + ") AND blockIndex IS NULL")
-      .all(...txIds) as { id: string }[];
-
-    if (txsToSeal.length === 0) return; // Nothing to seal
-
-    // Get latest block info (idx is the SQLite column name for block index)
-    const latestBlockRow = this.db
-      .prepare("SELECT MAX(idx) as maxIdx, hash FROM blockchain_blocks")
-      .get() as { maxIdx: number | null; hash: string } | undefined;
-
-    const nextIndex = (latestBlockRow?.maxIdx ?? -1) + 1;
-    const previousHash = latestBlockRow?.hash || "0".repeat(64);
-
-    // Mine a block with these transaction IDs
-    const baseBlock = {
-      index: nextIndex,
-      timestamp: Date.now(),
-      previousHash,
-      transactionIds: txsToSeal.map(tx => tx.id),
-    };
-
-    const { hash, nonce } = mineBlock(baseBlock);
-
-    // Insert into blockchain_blocks (idx is auto-increment PRIMARY KEY)
-    this.db.prepare(`
-      INSERT INTO blockchain_blocks (timestamp, previousHash, transactionIds, nonce, hash)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(baseBlock.timestamp, previousHash, JSON.stringify(baseBlock.transactionIds), nonce, hash);
-
-    // Update ledger transactions with their block index
-    this.db.prepare(`
-      UPDATE ledger_transactions SET blockIndex = ? WHERE id IN (${txsToSeal.map(() => "?").join(",")})
-    `).run(nextIndex, ...txsToSeal.map(tx => tx.id));
-  }
-
-  /**
-   * Get operator status: ledger stats and recent transactions.
-   */
-  getStatus(): {
-    mode: "simulated-hedera";
-    operatorAccountId: string;
-    blocksCount: number;
-    transactionsCount: number;
-    totalFeesHbar: number;
-    latestBlockIndex: number | null;
-  } {
-    const latestBlock = this.ledger.getLatestBlockIndex();
-    const txCount = this.db.prepare("SELECT COUNT(*) as n FROM ledger_transactions").get() as { n: number };
-    const blockCount = this.db.prepare("SELECT COUNT(*) as n FROM blockchain_blocks").get() as { n: number };
-    const fees = this.ledger.getTotalFees();
-
+  getStatus(): LedgerStatus {
+    const latest = this.blocks.getLatestBlock();
     return {
       mode: "simulated-hedera",
+      network: "testnet (simulated)",
       operatorAccountId: OPERATOR_ACCOUNT,
-      blocksCount: blockCount.n,
-      transactionsCount: txCount.n,
-      totalFeesHbar: this.round4(fees),
-      latestBlockIndex: latestBlock,
+      tokenIds: { ...TOKEN_IDS },
+      blocksCount: this.blocks.count(),
+      transactionsCount: this.ledger.count(),
+      totalFeesHbar: Math.round(this.ledger.getTotalFees() * 10_000) / 10_000,
+      latestHash: latest?.hash ?? "",
     };
   }
 
-  // ---- Private helpers ----
+  private moveCertificate(
+    type: LedgerTxType,
+    asset: CertificateAsset,
+    fromAccountId: string | null,
+    toAccountId: string | null,
+    kwh: number,
+    memo: string,
+    relatedTradeId: string | null
+  ): LedgerTransaction | null {
+    const a = round2(kwh);
+    if (!Number.isFinite(a) || a < 0) throw new ValidationError("certificate amount must be a non-negative number");
+    if (a === 0) return null; // below the 0.01 kWh ledger resolution
 
-  private getNextAccountNumber(): number {
-    const accounts = this.accounts.findAll();
-    let maxNum = 4803; // start of household range
-    for (const a of accounts) {
-      const match = a.id.match(/0\.0\.(\d+)/);
-      if (match) {
-        const num = Number(match[1]);
-        if (num > maxNum) maxNum = num;
+    const run = this.db.transaction(() => {
+      if (fromAccountId !== null) {
+        const held = this.getCertificates(fromAccountId)[asset === "SOLAR" ? "solar" : "wind"];
+        if (held < a - 1e-9) {
+          throw new ValidationError(`insufficient ${asset} certificates: has ${held.toFixed(2)} kWh, needs ${a.toFixed(2)} kWh`);
+        }
+        this.accounts.updateCertificateBalance(fromAccountId, asset, -a);
       }
-    }
-    return maxNum + 1;
+      if (toAccountId !== null) {
+        if (!this.accounts.findById(toAccountId)) throw new NotFoundError("To account");
+        this.accounts.updateCertificateBalance(toAccountId, asset, a);
+      }
+      return this.recordTx(type, asset, fromAccountId, toAccountId, a, memo, relatedTradeId);
+    });
+    return run();
   }
 
-  private recordTxUnsafe(
+  private nextHouseholdAccountNumber(): number {
+    let max = FIRST_HOUSEHOLD_ACCOUNT - 1;
+    for (const a of this.accounts.findByKind("household")) {
+      const n = Number(a.id.split(".")[2]);
+      if (n > max) max = n;
+    }
+    return max + 1;
+  }
+
+  /** Records a transaction and seals it into its own block. Caller must hold a DB transaction. */
+  private recordTx(
     type: LedgerTxType,
     asset: LedgerAsset,
     from: string | null,
     to: string | null,
     amount: number,
     memo: string,
-    relatedTradeId: string | null = null
+    relatedTradeId: string | null
   ): LedgerTransaction {
     const now = Date.now();
     this.txSequence += 1;
+    const id = `${OPERATOR_ACCOUNT}@${Math.floor(now / 1000)}.${String(this.txSequence).padStart(9, "0")}`;
 
-    // Hedera-style ID: operator@seconds.nanos (using sequence as nanos)
-    const sec = Math.floor(now / 1000);
-    const nanos = String(this.txSequence).padStart(9, "0");
-    const id = `${OPERATOR_ACCOUNT}@${sec}.${nanos}`;
+    const simTime = this.clock.simTime();
+    const latest = this.blocks.getLatestBlock();
+    const block = {
+      index: (latest?.index ?? -1) + 1,
+      timestamp: now,
+      previousHash: latest?.hash ?? GENESIS_PREVIOUS_HASH,
+      transactionIds: [id],
+    };
+    this.blocks.insertBlock({ ...block, ...mineBlock(block), simTime });
 
     const tx: LedgerTransaction = {
       id,
@@ -371,23 +344,19 @@ export class LedgerService {
       asset,
       fromAccountId: from,
       toAccountId: to,
-      amount: this.round2(amount),
+      amount: round2(amount),
       feeHbar: env.simulatedFeeHbar,
       memo,
       timestamp: now,
-      blockIndex: null,
+      simTime,
+      blockIndex: block.index,
       relatedTradeId,
     };
-
     this.ledger.insert(tx);
     return tx;
   }
+}
 
-  private round2(n: number): number {
-    return Math.round(n * 100) / 100;
-  }
-
-  private round4(n: number): number {
-    return Math.round(n * 10000) / 10000;
-  }
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

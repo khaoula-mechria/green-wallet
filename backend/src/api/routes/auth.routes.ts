@@ -17,7 +17,8 @@ const registerSchema = z
     location: z.string().trim().max(120).optional(),
     // bcrypt only uses the first 72 bytes of a password.
     password: z.string().min(6).max(72),
-    energyType: z.string().trim().min(1).max(30).optional(),
+    energyType: z.enum(["solar", "wind", "grid"]).optional(),
+    batteryCapacityKwh: z.number().finite().min(0).optional(),
   })
   .strict();
 

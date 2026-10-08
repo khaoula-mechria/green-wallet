@@ -4,14 +4,15 @@ import type { LedgerService } from "./ledgerService.js";
 import type { LedgerTransaction, Wallet } from "../domain/types.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
+import { greenShareOf } from "./certificateService.js";
 
 /**
- * Façade over LedgerService for token operations. Keeps the same API as before
- * (mint, transfer, getBalance, getHistory) to minimize changes in services that
- * depend on TokenService. New methods (topup, cashout, wallet) add Phase 0 features.
+ * Household-facing façade over LedgerService for TEC: transfers, balances,
+ * history, simulated top-up / cash-out and the wallet summary.
  *
- * All TEC movements are ledger transactions; MeasurementService and TradeService
- * route through here and ultimately call ledger.transfer.
+ * There is no minting: production earns certificates, and TEC only enters
+ * through the treasury (grants, top-ups) and moves when energy is sold
+ * (docs/DESIGN.md §2, §7).
  */
 export class TokenService {
   private readonly households: HouseholdRepository;
@@ -19,16 +20,6 @@ export class TokenService {
 
   constructor(private readonly db: Database, private readonly ledger: LedgerService) {
     this.households = new HouseholdRepository(db);
-  }
-
-  /** Mints TEC 1:1 against reported/tokenized energy (kWh) for a household (until P1). */
-  async mint(householdId: string, amountKwh: number): Promise<LedgerTransaction> {
-    if (amountKwh <= 0) throw new ValidationError("mint amount must be positive");
-    const household = this.households.findById(householdId);
-    if (!household) throw new NotFoundError("Household");
-
-    const account = this.ledger.getHouseholdAccount(householdId);
-    return this.ledger.transfer("MINT", null, account.id, amountKwh, `Energy surplus (${amountKwh.toFixed(2)} kWh) tokenized`);
   }
 
   /** Atomic TEC transfer between two households (does not move energy kWh). */
@@ -62,16 +53,11 @@ export class TokenService {
   }
 
   /** Get ledger history for a household. */
-  getHistory(householdId: string): LedgerTransaction[] {
+  getHistory(householdId: string, limit = 100): LedgerTransaction[] {
     const household = this.households.findById(householdId);
     if (!household) throw new NotFoundError("Household");
     const account = this.ledger.getHouseholdAccount(householdId);
-    return this.ledger.getHistory(account.id);
-  }
-
-  /** Get all ledger transactions (public view, TEC only). */
-  getAllHistory(): LedgerTransaction[] {
-    return this.ledger.getAllHistory();
+    return this.ledger.getHistory(account.id, limit);
   }
 
   /** Top-up TEC via simulated payment (demo only, dev-mode by default, needs opt-in in prod). */
@@ -127,11 +113,21 @@ export class TokenService {
       tokenBalance: account.balance,
       reservedTec: account.reservedBalance,
       availableTec: account.balance - account.reservedBalance,
-      certificates: { solar: 0, wind: 0 }, // Placeholder until P1
-      greenShare: { solarKwh: 0, windKwh: 0, greyKwh: 0, percentGreen: 0 }, // Placeholder until P1
-      utility: { importedKwh: 0, importCost: 0, exportedKwh: 0, exportCredit: 0, net: 0 }, // Placeholder until P2
+      certificates: this.ledger.getCertificates(account.id),
+      greenShare: greenShareOf([household]),
+      utility: {
+        importedKwh: round2(household.importedKwh),
+        importCost: round2(household.importCost),
+        exportedKwh: round2(household.exportedKwh),
+        exportCredit: round2(household.exportCredit),
+        net: round2(household.exportCredit - household.importCost),
+      },
       topupsEnabled: env.topupsEnabled,
       topupMaxTec: env.topupMaxTec,
     };
   }
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

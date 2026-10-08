@@ -1,7 +1,9 @@
 # Green Wallet — Energy Market Design
 
-**Status:** agreed design, not yet implemented. This document is the target the
-codebase will be brought to, phase by phase (see [§11 Implementation plan](#11-implementation-plan)).
+**Status:** agreed design. Backend: Phases 0–2 implemented; Phase 3 (auction) to do.
+Frontend: complete, running on an in-browser mock of the whole design (§11b).
+This document is the target the codebase is brought to, phase by phase
+(see [§11 Implementation plan](#11-implementation-plan)).
 Every rule below was agreed situation by situation; where a real-world system
 inspired a rule, it is named so the choice can be defended in the report.
 
@@ -649,6 +651,13 @@ rewritten and new) pass before the next phase starts. Frontend work is done
 inside each phase. The local dev DB (`backend/data/green-wallet.db*`) is
 wiped whenever the schema changes (free in local mode; auto-seed rebuilds it).
 
+| Phase | Backend status |
+|---|---|
+| 0 — Money and ledger | ✅ done |
+| 1 — Roles and certificates | ✅ done |
+| 2 — Batteries, shared battery, utility | ✅ done |
+| 3 — Auction | to do |
+
 ### Phase 0 — Foundations: money and ledger
 
 - New schema; DB wipe; auto-seed.
@@ -671,6 +680,13 @@ wiped whenever the schema changes (free in local mode; auto-seed rebuilds it).
 - Green-share KPI per household and microgrid.
 - *Transitional:* until batteries exist, sellable kWh keep today's
   `energyBalance` behaviour so the marketplace still works.
+- *As built:* certificates are account balances (SOLAR/WIND next to TEC). A
+  household's stock is its `energyBalance` plus kWh listed in offers or
+  reserved in pending trades; moving X kWh out of it moves X / stock of its
+  certificates. A deficit is covered from the household's own `energyBalance`
+  first (§5's "own stock first", applied early — this also fixes the old gap
+  where bought kWh were never consumed); the rest counts as grey until
+  Phase 2 adds the utility import.
 - Certificate invariant test; rewrite tests that expect minting.
 - **Frontend:** certificates in wallet, green share on dashboard.
 - **Demo:** "78% green"; producers and prosumers visibly different.
@@ -689,6 +705,19 @@ wiped whenever the schema changes (free in local mode; auto-seed rebuilds it).
   buyer's rented space, expiry, band check, shrinking. Transitional
   `energyBalance` removed.
 - Energy invariant test.
+- *As built:*
+  - No auction yet, so export and import happen at the reading
+    (`settlesInMs: 0`); producers export everything. Phase 3 moves the
+    unmatched part to the end of the interval.
+  - A household's battery and rented space share one certificate pool
+    (moving X kWh out of either moves X / (battery + stored) of its certificates).
+  - A persisted simulated clock (`ClockService`) is advanced by the simulation
+    tick; each interval end runs storage decay and offer expiry
+    (`MarketService.endInterval`). Phase 3 gives the clock its own timer.
+  - A marketplace purchase settles TEC, energy and certificates in **one**
+    database transaction: if anything fails, nothing moves.
+  - Seeded batteries start half full with grey energy, booked as initial stock
+    so the energy check balances.
 - **Frontend:** settings page, Microgrid shared-battery panel, battery column
   on Households, battery field at registration, utility statement in wallet.
 - **Demo:** batteries fill at noon and empty at night; stored energy decays;

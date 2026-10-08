@@ -68,6 +68,26 @@ export const env = {
   // Simulated Hedera network fee (HBAR) attached to every ledger transaction, paid by operator.
   simulatedFeeHbar: num(process.env.SIMULATED_FEE_HBAR, 0.0001),
 
+  // Phase 2: the utility's prices (docs/DESIGN.md §3.1). The floor (export) and ceiling
+  // (import) are derived from these components by priceBand().
+  wholesalePriceTec: num(process.env.WHOLESALE_PRICE_TEC, 0.08),
+  networkFeeTec: num(process.env.NETWORK_FEE_TEC, 0.09),
+  taxesTec: num(process.env.TAXES_TEC, 0.08),
+  supplierMarginTec: num(process.env.SUPPLIER_MARGIN_TEC, 0.05),
+  utilityBalancingCostTec: num(process.env.UTILITY_BALANCING_COST_TEC, 0.03),
+
+  // Phase 2: batteries and the shared battery (§1, §6).
+  householdDefaultBatteryCapacityKwh: num(process.env.HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH, 10),
+  householdMaxBatteryCapacityKwh: num(process.env.HOUSEHOLD_MAX_BATTERY_CAPACITY_KWH, 50),
+  sharedBatteryCapacityKwh: num(process.env.SHARED_BATTERY_CAPACITY_KWH, 100),
+  sharedBatteryRentedShare: num(process.env.SHARED_BATTERY_RENTED_SHARE, 0.6),
+  rentedCapPerHouseholdKwh: num(process.env.RENTED_CAP_PER_HOUSEHOLD_KWH, 10),
+  storageDecayPerSimHour: num(process.env.STORAGE_DECAY_PER_SIM_HOUR, 0.01),
+  gridPoolInitialShare: num(process.env.GRID_POOL_INITIAL_SHARE, 0.5),
+  gridPoolBuyBelowAvg: num(process.env.GRID_POOL_BUY_BELOW_AVG, 0.9),
+  gridPoolSellAboveAvg: num(process.env.GRID_POOL_SELL_ABOVE_AVG, 1.1),
+  offerExpirySimHours: num(process.env.OFFER_EXPIRY_SIM_HOURS, 24),
+
   // Blockchain mode selection. Hedera mode only activates when ALL three are set,
   // mirroring the reference system's "if TEC_TOKEN_ID set" gating pattern.
   hederaOperatorId: process.env.HEDERA_OPERATOR_ID ?? "",
@@ -78,6 +98,33 @@ export const env = {
 };
 
 export type Env = typeof env;
+
+export interface PriceBand {
+  floor: number;
+  ceiling: number;
+  mid: number;
+  components: { wholesale: number; networkFee: number; taxes: number; supplierMargin: number; balancingCost: number };
+}
+
+/** DESIGN.md §3.1: the utility's prices, built from cost components.
+ *  ceiling (import) = wholesale + network + taxes + margin; floor (export) = wholesale - balancing. */
+export function priceBand(e: Env = env): PriceBand {
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
+  const ceiling = r3(e.wholesalePriceTec + e.networkFeeTec + e.taxesTec + e.supplierMarginTec);
+  const floor = r3(e.wholesalePriceTec - e.utilityBalancingCostTec);
+  return {
+    floor,
+    ceiling,
+    mid: r3((floor + ceiling) / 2),
+    components: {
+      wholesale: e.wholesalePriceTec,
+      networkFee: e.networkFeeTec,
+      taxes: e.taxesTec,
+      supplierMargin: e.supplierMarginTec,
+      balancingCost: e.utilityBalancingCostTec,
+    },
+  };
+}
 
 export const isHederaConfigured =
   env.hederaOperatorId.length > 0 && env.hederaOperatorKey.length > 0 && env.hederaTokenId.length > 0;
@@ -97,12 +144,44 @@ export function validateEnv(e: Env = env): string[] {
     ["MEASUREMENT_MIN_INTERVAL_MS", e.measurementMinIntervalMs],
     ["TREASURY_INITIAL_TEC", e.treasuryInitialTec],
     ["TREASURY_LOW_WARNING_TEC", e.treasuryLowWarningTec],
+    ["GRID_STORAGE_INITIAL_TEC", e.gridStorageInitialTec],
     ["WELCOME_GRANT_TEC", e.welcomeGrantTec],
     ["TOPUP_MAX_TEC", e.topupMaxTec],
     ["TOPUP_COOLDOWN_MS", e.topupCooldownMs],
     ["SIMULATED_FEE_HBAR", e.simulatedFeeHbar],
   ] as const) {
     if (!Number.isFinite(value) || value < 0) problems.push(`${name} must be a non-negative number`);
+  }
+  for (const [name, value] of [
+    ["WHOLESALE_PRICE_TEC", e.wholesalePriceTec],
+    ["NETWORK_FEE_TEC", e.networkFeeTec],
+    ["TAXES_TEC", e.taxesTec],
+    ["SUPPLIER_MARGIN_TEC", e.supplierMarginTec],
+    ["UTILITY_BALANCING_COST_TEC", e.utilityBalancingCostTec],
+    ["HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH", e.householdDefaultBatteryCapacityKwh],
+    ["HOUSEHOLD_MAX_BATTERY_CAPACITY_KWH", e.householdMaxBatteryCapacityKwh],
+    ["SHARED_BATTERY_CAPACITY_KWH", e.sharedBatteryCapacityKwh],
+    ["RENTED_CAP_PER_HOUSEHOLD_KWH", e.rentedCapPerHouseholdKwh],
+    ["OFFER_EXPIRY_SIM_HOURS", e.offerExpirySimHours],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) problems.push(`${name} must be a non-negative number`);
+  }
+  for (const [name, value] of [
+    ["SHARED_BATTERY_RENTED_SHARE", e.sharedBatteryRentedShare],
+    ["STORAGE_DECAY_PER_SIM_HOUR", e.storageDecayPerSimHour],
+    ["GRID_POOL_INITIAL_SHARE", e.gridPoolInitialShare],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) problems.push(`${name} must be between 0 and 1`);
+  }
+  const band = priceBand(e);
+  if (!(band.floor >= 0 && band.floor < band.ceiling)) {
+    problems.push(`price band is invalid: floor ${band.floor} must be >= 0 and below the ceiling ${band.ceiling}`);
+  }
+  if (e.householdDefaultBatteryCapacityKwh > e.householdMaxBatteryCapacityKwh) {
+    problems.push("HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH must not exceed HOUSEHOLD_MAX_BATTERY_CAPACITY_KWH");
+  }
+  if (e.gridStorageInitialTec > e.treasuryInitialTec) {
+    problems.push("GRID_STORAGE_INITIAL_TEC must not exceed TREASURY_INITIAL_TEC (it is funded from the treasury)");
   }
 
   if (!e.isProduction) return problems;

@@ -1,27 +1,24 @@
 import { Router } from "express";
 import type { Container } from "../../container.js";
-import type { LedgerTransaction } from "../../domain/types.js";
 import { asyncRoute } from "../../middleware/errorHandler.js";
+import { parseLimit } from "../../middleware/validate.js";
+import type { LedgerHistoryFilter } from "../../services/ledgerService.js";
+import { ValidationError } from "../../utils/errors.js";
+
+const FILTERS: LedgerHistoryFilter[] = ["ALL", "TEC", "CERT", "RECORD"];
 
 export function transactionsRoutes(c: Container): Router {
   const router = Router();
 
+  // Public by design (docs/DESIGN.md §11): the ledger is the platform's public notary.
   router.get(
     "/",
     asyncRoute(async (req, res) => {
-      const limit = req.query.limit ? Number(req.query.limit) : 200;
-      const asset = req.query.asset ? String(req.query.asset) : "TEC";
+      const limit = parseLimit(req.query.limit, 200);
+      const asset = String(req.query.asset ?? "ALL").toUpperCase() as LedgerHistoryFilter;
+      if (!FILTERS.includes(asset)) throw new ValidationError(`asset must be one of ${FILTERS.join(", ")}`);
 
-      // For Phase 0, only TEC transactions are available (no certificates yet)
-      let txs: LedgerTransaction[] = [];
-      if (asset === "TEC" || asset === "ALL") {
-        txs = c.tokens.getAllHistory();
-      }
-
-      // Convert to public form with labels and household IDs
-      const data = txs.map(tx => c.ledger.toLedgerTxPublic(tx)).slice(0, limit);
-
-      res.json({ success: true, data });
+      res.json({ success: true, data: c.ledger.toLedgerTxs(c.ledger.getAllHistory(limit, asset)) });
     })
   );
 

@@ -41,10 +41,10 @@ describe("API integration", () => {
     expect(res.status).toBe(401);
   });
 
-  it("runs the full producer -> offer -> consumer -> purchase -> blockchain flow over HTTP", async () => {
+  it("runs the full prosumer -> offer -> consumer -> purchase -> blockchain flow over HTTP", async () => {
     const seller = await request(app)
       .post("/api/auth/register")
-      .send({ id: "seller-1", name: "Seller", type: "producer", location: "Tunis", password: "password123" });
+      .send({ id: "seller-1", name: "Seller", type: "prosumer", location: "Tunis", password: "password123", batteryCapacityKwh: 10 });
     const sellerToken = seller.body.data.token;
 
     const measure = await request(app)
@@ -64,13 +64,9 @@ describe("API integration", () => {
     const buyer = await request(app)
       .post("/api/auth/register")
       .send({ id: "buyer-1", name: "Buyer", type: "consumer", location: "Tunis", password: "password123" });
-    expect(buyer.status).toBe(201);
+    // Starting TEC comes from the server-side consumer welcome grant.
+    expect(buyer.body.data.household.tokenBalance).toBeGreaterThan(0);
     const buyerToken = buyer.body.data.token;
-    // Starting TEC comes from the server-side consumer signup grant
-    const walletRes = await request(app)
-      .get("/api/wallet/buyer-1")
-      .set("Authorization", `Bearer ${buyerToken}`);
-    expect(walletRes.body.data.tokenBalance).toBeGreaterThan(0);
 
     const purchase = await request(app)
       .post(`/api/market/offers/${offerId}/purchase`)
@@ -81,7 +77,7 @@ describe("API integration", () => {
 
     const blocks = await request(app).get("/api/blockchain/blocks");
     expect(blocks.status).toBe(200);
-    expect(blocks.body.data.length).toBeGreaterThanOrEqual(1); // Phase 0: genesis block + ledger txs not yet sealed to blocks
+    expect(blocks.body.data.length).toBeGreaterThan(1);
 
     const dashboard = await request(app).get("/api/dashboard");
     expect(dashboard.status).toBe(200);
@@ -91,7 +87,7 @@ describe("API integration", () => {
   it("prevents a household from cancelling another household's offer", async () => {
     const seller = await request(app)
       .post("/api/auth/register")
-      .send({ id: "seller-2", name: "Seller", type: "producer", location: "Tunis", password: "password123" });
+      .send({ id: "seller-2", name: "Seller", type: "prosumer", location: "Tunis", password: "password123" });
     await request(app)
       .post("/api/energy/measurements")
       .set("Authorization", `Bearer ${seller.body.data.token}`)

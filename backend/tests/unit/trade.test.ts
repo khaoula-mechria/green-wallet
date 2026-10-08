@@ -1,9 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildTestContainer, seedHousehold } from "../testContainer.js";
+import { buildTestContainer, seedHousehold, seedSeller } from "../testContainer.js";
 
 async function setupOffer(c: ReturnType<typeof buildTestContainer>, amount = 3, price = 0.2) {
-  const producer = await seedHousehold(c, { type: "producer" });
-  await c.measurements.record(producer.id, 8, 3); // surplus 5
+  const producer = await seedSeller(c); // prosumer, 5 kWh in its battery, can list 3
   const offer = c.marketplace.createOffer(producer.id, amount, price);
   return { producer, offer };
 }
@@ -21,15 +20,19 @@ describe("TradeService — purchasing energy", () => {
     expect(trade.totalPrice).toBeCloseTo(0.6);
     expect(trade.ledgerTxId).toBeTruthy();
 
-    // Buyer: started 20, spent 0.6, gained 3 kWh
-    const buyerBalance = c.tokens.getBalance(buyer.id);
-    expect(buyerBalance).toBeCloseTo(19.4, 2);
-    const buyerAfter = c.households.getById(buyer.id);
-    expect(buyerAfter.energyBalance).toBe(3);
+    // Buyer: started 20, spent 0.6; the 3 kWh are delivered into its rented space in the shared battery.
+    expect(c.tokens.getBalance(buyer.id)).toBeCloseTo(19.4, 2);
+    expect(c.households.getById(buyer.id).storedKwh).toBe(3);
 
-    // Seller: produced surplus 5 kWh, minted 5 TEC, received 0.6 from sale = 5.6 TEC
-    const sellerBalance = c.tokens.getBalance(producer.id);
-    expect(sellerBalance).toBeCloseTo(5.6, 2);
+    // Seller: welcome grant 10 + 0.6 from the sale (production earns certificates, not TEC);
+    // the kWh left its battery.
+    expect(c.tokens.getBalance(producer.id)).toBeCloseTo(10.6, 2);
+    expect(c.households.getById(producer.id).batteryChargeKwh).toBe(2);
+
+    // The 3 kWh sold carry their 3 SOLAR certificates to the buyer.
+    expect(trade.certificates).toEqual({ solar: 3, wind: 0 });
+    expect(c.tokens.wallet(buyer.id).certificates).toEqual({ solar: 3, wind: 0 });
+    expect(c.tokens.wallet(producer.id).certificates).toEqual({ solar: 2, wind: 0 });
 
     const updatedOffer = c.marketplace.getOffer(offer.id);
     expect(updatedOffer.status).toBe("completed");
@@ -38,10 +41,13 @@ describe("TradeService — purchasing energy", () => {
 
   it("rejects a purchase when the buyer has insufficient token balance", async () => {
     const c = buildTestContainer();
-    const { offer } = await setupOffer(c, 3, 5); // totalPrice = 15
-    const buyer = await seedHousehold(c, { type: "consumer" }); // 10 TEC grant only
+    const { offer } = await setupOffer(c, 3, 0.2); // totalPrice = 0.6
+    const buyer = await seedHousehold(c, { type: "consumer" }); // 10 TEC grant
+    c.tokens.cashout(buyer.id, 9.5); // 0.5 left
 
     await expect(c.trades.purchase(buyer.id, offer.id, 3)).rejects.toThrow(/insufficient balance/i);
+    // Nothing settled: no energy delivered.
+    expect(c.households.getById(buyer.id).storedKwh).toBe(0);
 
     // Offer capacity must be released back after a failed execution.
     const restoredOffer = c.marketplace.getOffer(offer.id);

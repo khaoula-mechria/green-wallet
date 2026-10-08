@@ -29,7 +29,7 @@ async function start() {
 
   const householdCount = (db.prepare(`SELECT COUNT(*) as n FROM households`).get() as { n: number }).n;
   if (householdCount === 0 && env.seedDemoData) {
-    console.log("[server] empty database detected — seeding demo households (5 producers + 5 consumers)");
+    console.log("[server] empty database detected — seeding demo microgrid (2 producers, 5 prosumers, 4 consumers)");
     await seedDemoData(container, (msg) => console.log(msg));
   }
 

@@ -6,7 +6,19 @@ import { HouseholdRepository } from "../db/repositories/householdRepository.js";
 import type { Household, HouseholdType, PublicHousehold, AuthTokenPayload } from "../domain/types.js";
 import { env } from "../config/env.js";
 import { ValidationError, UnauthorizedError, ConflictError } from "../utils/errors.js";
-import type { LedgerService } from "./ledgerService.js";
+import { TREASURY_ACCOUNT, type LedgerService } from "./ledgerService.js";
+import { defaultSettings, resolveSettings, type HouseholdService, type SettingsPatch } from "./householdService.js";
+
+/** Energy source by role (DESIGN.md §0.1): producers are solar or wind farms, prosumers
+ * have rooftop solar, consumers only draw from the grid. */
+function energyTypeFor(type: HouseholdType, requested: string | undefined): string {
+  const allowed = type === "producer" ? ["solar", "wind"] : type === "prosumer" ? ["solar"] : ["grid"];
+  if (requested === undefined) return allowed[0];
+  if (!allowed.includes(requested)) {
+    throw new ValidationError(`a ${type}'s energy source must be ${allowed.join(" or ")}`);
+  }
+  return requested;
+}
 
 export interface RegisterInput {
   id?: string;
@@ -15,17 +27,33 @@ export interface RegisterInput {
   location: string;
   password: string;
   energyType?: string;
+  /** Prosumers only: home battery size (default HOUSEHOLD_DEFAULT_BATTERY_CAPACITY_KWH, 0 = none). */
+  batteryCapacityKwh?: number;
+  /** Trusted callers only (seeding): starting agent settings. Never from a client. */
+  settings?: SettingsPatch;
 }
 
-export function toPublicHousehold(h: Household): PublicHousehold {
-  const { passwordHash: _p, hederaPrivateKeyEncrypted: _k, ...rest } = h;
-  return rest;
+/** DESIGN.md §1.4: only prosumers have a home battery, enforced here, not only in the UI. */
+function batteryCapacityFor(type: HouseholdType, requested: number | undefined): number {
+  if (type !== "prosumer") {
+    if (requested !== undefined && requested > 0) throw new ValidationError("only prosumers have a home battery");
+    return 0;
+  }
+  const capacity = requested ?? env.householdDefaultBatteryCapacityKwh;
+  if (!Number.isFinite(capacity) || capacity < 0 || capacity > env.householdMaxBatteryCapacityKwh) {
+    throw new ValidationError(`battery capacity must be between 0 and ${env.householdMaxBatteryCapacityKwh} kWh`);
+  }
+  return capacity;
 }
 
 export class AuthService {
   private readonly households: HouseholdRepository;
 
-  constructor(db: Database, private readonly ledger: LedgerService) {
+  constructor(
+    private readonly db: Database,
+    private readonly ledger: LedgerService,
+    private readonly householdViews: HouseholdService
+  ) {
     this.households = new HouseholdRepository(db);
   }
 
@@ -46,6 +74,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(input.password, 10);
     const now = Date.now();
 
+    const batteryCapacityKwh = batteryCapacityFor(input.type, input.batteryCapacityKwh);
     const household: Household = {
       id,
       name: input.name,
@@ -54,27 +83,35 @@ export class AuthService {
       passwordHash,
       hederaAccountId: null,
       hederaPrivateKeyEncrypted: null,
-      energyType: input.energyType ?? (input.type === "consumer" ? "grid" : "solar"),
+      energyType: energyTypeFor(input.type, input.energyType),
       currentProduction: 0,
       currentConsumption: 0,
-      energyBalance: 0,
+      batteryCapacityKwh,
+      batteryKwh: 0,
+      storedKwh: 0,
+      settings: resolveSettings(defaultSettings(), input.settings ?? {}, input.type, batteryCapacityKwh),
+      importedKwh: 0,
+      importCost: 0,
+      exportedKwh: 0,
+      exportCredit: 0,
+      consumedKwh: 0,
+      consumedSolarKwh: 0,
+      consumedWindKwh: 0,
       createdAt: now,
       updatedAt: now,
     };
 
-    this.households.insert(household);
-
-    // Create household account in the ledger.
-    const account = this.ledger.createHouseholdAccount(id, input.name);
-    household.hederaAccountId = account.id; // Store the simulated Hedera-style ID
-
-    // Issue welcome grant to prosumers and consumers (not producers).
-    if (input.type !== "producer" && env.welcomeGrantTec > 0) {
-      this.ledger.transfer("WELCOME_GRANT", "0.0.1001", account.id, env.welcomeGrantTec, "Welcome grant");
-    }
+    // Household row, ledger account and welcome grant succeed or fail together.
+    this.db.transaction(() => {
+      this.households.insert(household);
+      const account = this.ledger.createHouseholdAccount(id, input.name);
+      if (input.type !== "producer" && env.welcomeGrantTec > 0) {
+        this.ledger.transfer("WELCOME_GRANT", TREASURY_ACCOUNT, account.id, env.welcomeGrantTec, "Welcome grant");
+      }
+    })();
 
     const token = this.issueToken(household);
-    return { household: toPublicHousehold(household), token };
+    return { household: this.householdViews.getById(id), token };
   }
 
   async login(id: string, password: string): Promise<{ household: PublicHousehold; token: string }> {
@@ -85,7 +122,7 @@ export class AuthService {
     if (!valid) throw new UnauthorizedError("invalid credentials");
 
     const token = this.issueToken(household);
-    return { household: toPublicHousehold(household), token };
+    return { household: this.householdViews.getById(id), token };
   }
 
   private issueToken(household: Household): string {

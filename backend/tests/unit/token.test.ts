@@ -2,18 +2,6 @@ import { describe, it, expect } from "vitest";
 import { buildTestContainer, seedHousehold } from "../testContainer.js";
 
 describe("TokenService — TEC balances and transfers", () => {
-  it("mints TEC 1:1 against a positive energy amount", async () => {
-    const c = buildTestContainer();
-    const h = await seedHousehold(c, { type: "consumer" }); // gets 10 TEC grant
-    const before = c.tokens.getBalance(h.id);
-    const tx = await c.tokens.mint(h.id, 4.5);
-
-    expect(tx.type).toBe("MINT");
-    expect(tx.fromAccountId).toBeNull();
-    expect(tx.amount).toBe(4.5);
-    expect(c.tokens.getBalance(h.id)).toBeCloseTo(before + 4.5, 2);
-  });
-
   it("transfers TEC atomically between two households", async () => {
     const c = buildTestContainer();
     const a = await seedHousehold(c, { type: "consumer" }); // 10 TEC grant
@@ -49,14 +37,13 @@ describe("TokenService — TEC balances and transfers", () => {
 
   it("records every transfer in both parties' token history", async () => {
     const c = buildTestContainer();
-    const a = await seedHousehold(c, { type: "consumer" }); // 10 TEC + welcome grant
-    const b = await seedHousehold(c, { type: "consumer" }); // 10 TEC
-    await c.tokens.transfer(a.id, b.id, 3);
+    const a = await seedHousehold(c, { type: "consumer" });
+    const b = await seedHousehold(c, { type: "consumer" });
+    const tx = await c.tokens.transfer(a.id, b.id, 3);
 
-    const historyA = c.tokens.getHistory(a.id);
-    const historyB = c.tokens.getHistory(b.id);
-    // Each has welcome grant + the transfer = 2+ transactions
-    expect(historyA.length).toBeGreaterThanOrEqual(1);
-    expect(historyB.length).toBeGreaterThanOrEqual(1);
+    // Welcome grant, then the transfer (most recent first).
+    expect(c.tokens.getHistory(a.id).map((t) => t.type)).toEqual(["TRANSFER", "WELCOME_GRANT"]);
+    expect(c.tokens.getHistory(b.id).map((t) => t.type)).toEqual(["TRANSFER", "WELCOME_GRANT"]);
+    expect(c.tokens.getHistory(b.id)[0].id).toBe(tx.id);
   });
 });

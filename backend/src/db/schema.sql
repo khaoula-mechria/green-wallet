@@ -1,4 +1,4 @@
--- Canonical schema (Phase 0 — foundations: money and ledger).
+-- Canonical schema (Phase 2 — batteries, shared battery, utility statement).
 -- Run in full by database.ts on every boot. DB is wiped on schema version mismatch.
 
 CREATE TABLE IF NOT EXISTS households (
@@ -12,28 +12,75 @@ CREATE TABLE IF NOT EXISTS households (
   energyType TEXT NOT NULL DEFAULT 'grid',
   currentProduction REAL NOT NULL DEFAULT 0,
   currentConsumption REAL NOT NULL DEFAULT 0,
-  energyBalance REAL NOT NULL DEFAULT 0,
+  -- Energy stocks (DESIGN.md §1, §6): own battery, and rented space in the shared battery.
+  batteryCapacityKwh REAL NOT NULL DEFAULT 0 CHECK (batteryCapacityKwh >= 0),
+  batteryKwh REAL NOT NULL DEFAULT 0 CHECK (batteryKwh >= 0),
+  storedKwh REAL NOT NULL DEFAULT 0 CHECK (storedKwh >= 0),
+  -- Market agent settings (§4.1); the price limits are used by the Phase 3 auction.
+  overflowMode TEXT NOT NULL DEFAULT 'sell' CHECK (overflowMode IN ('sell', 'store')),
+  minSellPrice REAL NOT NULL,
+  maxBuyPrice REAL NOT NULL,
+  storeMinPrice REAL NOT NULL,
+  batterySellEnabled INTEGER NOT NULL DEFAULT 0,
+  batterySellMinPrice REAL NOT NULL,
+  batteryKeepPercent REAL NOT NULL DEFAULT 20 CHECK (batteryKeepPercent BETWEEN 0 AND 100),
+  auctionOptOut INTEGER NOT NULL DEFAULT 0,
+  -- Utility statement (§7.4): real money, off the ledger.
+  importedKwh REAL NOT NULL DEFAULT 0,
+  importCost REAL NOT NULL DEFAULT 0,
+  exportedKwh REAL NOT NULL DEFAULT 0,
+  exportCredit REAL NOT NULL DEFAULT 0,
+  -- Lifetime consumption, split by origin for the green-share KPI (grey = total - solar - wind).
+  consumedKwh REAL NOT NULL DEFAULT 0,
+  consumedSolarKwh REAL NOT NULL DEFAULT 0,
+  consumedWindKwh REAL NOT NULL DEFAULT 0,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY CHECK (id GLOB '0.0.[0-9]*'),
-  kind TEXT NOT NULL CHECK (kind IN ('household', 'treasury', 'clearing', 'grid_storage')),
+  kind TEXT NOT NULL CHECK (kind IN ('household', 'treasury', 'clearing', 'grid_storage', 'utility')),
   householdId TEXT UNIQUE REFERENCES households(id),
   label TEXT NOT NULL,
   balance REAL NOT NULL DEFAULT 0,
   reservedBalance REAL NOT NULL DEFAULT 0,
+  -- Green certificates held, in kWh (on real Hedera: two HTS token balances).
+  solarBalance REAL NOT NULL DEFAULT 0 CHECK (solarBalance >= 0),
+  windBalance REAL NOT NULL DEFAULT 0 CHECK (windBalance >= 0),
   createdAt INTEGER NOT NULL
+);
+
+-- The operator's share of the community battery (§6.1). Single row; the rented
+-- compartment is the sum of households.storedKwh.
+CREATE TABLE IF NOT EXISTS grid_storage (
+  id TEXT PRIMARY KEY CHECK (id = 'grid'),
+  poolKwh REAL NOT NULL DEFAULT 0 CHECK (poolKwh >= 0),
+  -- Energy that entered the microgrid without being produced or imported
+  -- (pre-charged grid pool, pre-charged demo batteries): needed for the energy check.
+  initialStockKwh REAL NOT NULL DEFAULT 0,
+  -- Decayed energy the full grid pool could not take, exported by the operator.
+  operatorExportedKwh REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS energy_measurements (
   id TEXT PRIMARY KEY,
   householdId TEXT NOT NULL REFERENCES households(id),
   timestamp INTEGER NOT NULL,
+  simTime INTEGER NOT NULL DEFAULT 0,
+  interval INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'simulation' CHECK (source IN ('simulation', 'manual')),
   production REAL NOT NULL,
   consumption REAL NOT NULL,
-  surplus REAL NOT NULL
+  surplus REAL NOT NULL,
+  -- Where the energy went (§5); auction columns arrive with Phase 3.
+  selfUseKwh REAL NOT NULL DEFAULT 0,
+  toBatteryKwh REAL NOT NULL DEFAULT 0,
+  toStorageKwh REAL NOT NULL DEFAULT 0,
+  fromBatteryKwh REAL NOT NULL DEFAULT 0,
+  fromStorageKwh REAL NOT NULL DEFAULT 0,
+  exportedKwh REAL NOT NULL DEFAULT 0,
+  importedKwh REAL NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS energy_offers (
@@ -42,7 +89,9 @@ CREATE TABLE IF NOT EXISTS energy_offers (
   amountKwh REAL NOT NULL,
   amountRemainingKwh REAL NOT NULL,
   pricePerKwh REAL NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'cancelled')),
+  status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'cancelled', 'expired')),
+  expiresAtSimTime INTEGER NOT NULL,
+  expiresAtInterval INTEGER NOT NULL,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
 );
@@ -57,6 +106,9 @@ CREATE TABLE IF NOT EXISTS energy_trades (
   totalPrice REAL NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
   ledgerTxId TEXT,
+  certSolarKwh REAL NOT NULL DEFAULT 0,
+  certWindKwh REAL NOT NULL DEFAULT 0,
+  simTime INTEGER NOT NULL DEFAULT 0,
   createdAt INTEGER NOT NULL,
   completedAt INTEGER
 );
@@ -71,6 +123,7 @@ CREATE TABLE IF NOT EXISTS ledger_transactions (
   feeHbar REAL NOT NULL DEFAULT 0,
   memo TEXT NOT NULL DEFAULT '',
   timestamp INTEGER NOT NULL,
+  simTime INTEGER NOT NULL DEFAULT 0,
   blockIndex INTEGER,
   relatedTradeId TEXT
 );
@@ -78,6 +131,7 @@ CREATE TABLE IF NOT EXISTS ledger_transactions (
 CREATE TABLE IF NOT EXISTS blockchain_blocks (
   idx INTEGER PRIMARY KEY,
   timestamp INTEGER NOT NULL,
+  simTime INTEGER NOT NULL DEFAULT 0,
   previousHash TEXT NOT NULL,
   hash TEXT NOT NULL,
   nonce INTEGER NOT NULL,

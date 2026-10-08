@@ -75,11 +75,11 @@ describe("Phase 0 — manual meter readings are bounded", () => {
   const submit = (body: object) =>
     request(app).post("/api/energy/measurements").set("Authorization", `Bearer ${token}`).send(body);
 
-  it("rejects readings above the per-reading cap, so surplus can't mint unbounded TEC", async () => {
+  it("rejects readings above the per-reading cap, so production can't issue unbounded certificates", async () => {
     const res = await submit({ production: 1e12, consumption: 0 });
     expect(res.status).toBe(400);
-    const balance = container.tokens.getBalance("meter-1");
-    expect(balance).toBe(0); // producer, no grant
+    expect(container.tokens.wallet("meter-1").certificates).toEqual({ solar: 0, wind: 0 });
+    expect(container.tokens.getBalance("meter-1")).toBe(0); // producer, no grant
   });
 
   it("allows one reading per household per interval, and a rejected reading doesn't use the slot", async () => {
@@ -88,8 +88,12 @@ describe("Phase 0 — manual meter readings are bounded", () => {
     const second = await submit({ production: 8, consumption: 3 });
     expect(second.status).toBe(429);
     expect(second.body.error.code).toBe("TOO_MANY_REQUESTS");
-    const balance = container.tokens.getBalance("meter-1");
-    expect(balance).toBeCloseTo(5, 2); // 5 TEC minted from 5 kWh surplus
+    // One accepted reading: 8 kWh certified, 3 used on the spot, 5 exported (a producer has no
+    // storage) with their certificates. Production earns no TEC; the export is on the utility statement.
+    const wallet = container.tokens.wallet("meter-1");
+    expect(wallet.certificates).toEqual({ solar: 0, wind: 0 });
+    expect(wallet.utility).toMatchObject({ exportedKwh: 5, exportCredit: 0.25 });
+    expect(container.tokens.getBalance("meter-1")).toBe(0);
   });
 
   it("can be switched off entirely (production default)", async () => {
@@ -109,10 +113,10 @@ describe("Phase 0 — private data is owner-only", () => {
 
   beforeEach(async () => {
     ({ app, container } = buildApp());
-    aliceToken = await register(app, "alice", "producer");
+    aliceToken = await register(app, "alice", "prosumer"); // 10 kWh battery by default
     bobToken = await register(app, "bob", "consumer");
     eveToken = await register(app, "eve", "consumer");
-    await container.measurements.record("alice", 8, 3);
+    await container.measurements.record("alice", 8, 3); // 5 kWh in the battery, 3 listable
     const offer = container.marketplace.createOffer("alice", 3, 0.2);
     tradeId = (await container.trades.purchase("bob", offer.id, 2)).id;
   });

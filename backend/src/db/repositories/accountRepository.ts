@@ -1,5 +1,5 @@
 import type { Database } from "better-sqlite3";
-import type { Account, AccountKind } from "../../domain/types.js";
+import type { Account, AccountKind, CertificateAsset } from "../../domain/types.js";
 
 export class AccountRepository {
   constructor(private readonly db: Database) {}
@@ -8,8 +8,8 @@ export class AccountRepository {
     this.db
       .prepare(
         `INSERT INTO accounts
-          (id, kind, householdId, label, balance, reservedBalance, createdAt)
-         VALUES (@id, @kind, @householdId, @label, @balance, @reservedBalance, @createdAt)`
+          (id, kind, householdId, label, balance, reservedBalance, solarBalance, windBalance, createdAt)
+         VALUES (@id, @kind, @householdId, @label, @balance, @reservedBalance, @solarBalance, @windBalance, @createdAt)`
       )
       .run(a);
   }
@@ -28,6 +28,21 @@ export class AccountRepository {
 
   findAll(): Account[] {
     return this.db.prepare(`SELECT * FROM accounts ORDER BY id`).all() as Account[];
+  }
+
+  sumBalances(): number {
+    return (this.db.prepare(`SELECT COALESCE(SUM(balance), 0) AS total FROM accounts`).get() as { total: number }).total;
+  }
+
+  sumCertificateBalances(asset: CertificateAsset): number {
+    const column = asset === "SOLAR" ? "solarBalance" : "windBalance";
+    return (this.db.prepare(`SELECT COALESCE(SUM(${column}), 0) AS total FROM accounts`).get() as { total: number }).total;
+  }
+
+  updateCertificateBalance(id: string, asset: CertificateAsset, delta: number): void {
+    const column = asset === "SOLAR" ? "solarBalance" : "windBalance";
+    // Amounts are 0.01 kWh steps; rounding keeps float drift (0.3 - 0.1 - 0.2) from tripping the >= 0 CHECK.
+    this.db.prepare(`UPDATE accounts SET ${column} = ROUND(${column} + ?, 6) WHERE id = ?`).run(delta, id);
   }
 
   updateBalance(id: string, delta: number): void {
