@@ -8,7 +8,7 @@ export function buildTestContainer(): Container {
 
 export async function seedHousehold(
   c: Container,
-  overrides: Partial<{ id: string; name: string; type: "producer" | "consumer" | "prosumer"; password: string; initialTokenBalance: number }> = {}
+  overrides: Partial<{ id: string; name: string; type: "producer" | "consumer" | "prosumer"; password: string }> = {}
 ) {
   const { household } = await c.auth.register({
     id: overrides.id ?? `household-${Math.random().toString(36).slice(2, 8)}`,
@@ -16,7 +16,6 @@ export async function seedHousehold(
     type: overrides.type ?? "producer",
     location: "Test City",
     password: overrides.password ?? "password123",
-    initialTokenBalance: overrides.initialTokenBalance ?? 0,
   });
   return household;
 }
