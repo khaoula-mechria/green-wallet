@@ -2,14 +2,14 @@ import type { Database } from "better-sqlite3";
 import { v4 as uuid } from "uuid";
 import { HouseholdRepository } from "../db/repositories/householdRepository.js";
 import { MeasurementRepository } from "../db/repositories/measurementRepository.js";
-import type { EnergyMeasurement, TokenTransaction } from "../domain/types.js";
+import type { EnergyMeasurement, LedgerTransaction } from "../domain/types.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import type { TokenService } from "./tokenService.js";
 import { env } from "../config/env.js";
 
 export interface RecordMeasurementResult {
   measurement: EnergyMeasurement;
-  mintTx: TokenTransaction | null;
+  mintTx: LedgerTransaction | null;
 }
 
 /**
@@ -60,8 +60,10 @@ export class MeasurementService {
     this.measurements.insert(measurement);
     this.households.updateSnapshot(householdId, production, consumption, timestamp);
 
-    let mintTx: TokenTransaction | null = null;
+    // Update energy balance (kWh available to sell) with the surplus.
+    let mintTx: LedgerTransaction | null = null;
     if (surplus > 0) {
+      this.households.adjustEnergyBalance(householdId, surplus, timestamp);
       mintTx = await this.tokenService.mint(householdId, surplus);
     }
 

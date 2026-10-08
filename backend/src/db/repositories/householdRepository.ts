@@ -9,9 +9,9 @@ export class HouseholdRepository {
       .prepare(
         `INSERT INTO households
           (id, name, type, location, passwordHash, hederaAccountId, hederaPrivateKeyEncrypted,
-           energyType, currentProduction, currentConsumption, energyBalance, tokenBalance, createdAt, updatedAt)
+           energyType, currentProduction, currentConsumption, energyBalance, createdAt, updatedAt)
          VALUES (@id, @name, @type, @location, @passwordHash, @hederaAccountId, @hederaPrivateKeyEncrypted,
-           @energyType, @currentProduction, @currentConsumption, @energyBalance, @tokenBalance, @createdAt, @updatedAt)`
+           @energyType, @currentProduction, @currentConsumption, @energyBalance, @createdAt, @updatedAt)`
       )
       .run(h);
   }
@@ -32,19 +32,12 @@ export class HouseholdRepository {
       .run(production, consumption, updatedAt, id);
   }
 
-  adjustBalances(
-    id: string,
-    deltaEnergyBalance: number,
-    deltaTokenBalance: number,
-    updatedAt: number
-  ): void {
+  adjustEnergyBalance(id: string, deltaEnergyBalance: number, updatedAt: number): void {
     this.db
       .prepare(
-        `UPDATE households
-         SET energyBalance = energyBalance + ?, tokenBalance = tokenBalance + ?, updatedAt = ?
-         WHERE id = ?`
+        `UPDATE households SET energyBalance = energyBalance + ?, updatedAt = ? WHERE id = ?`
       )
-      .run(deltaEnergyBalance, deltaTokenBalance, updatedAt, id);
+      .run(deltaEnergyBalance, updatedAt, id);
   }
 
   setHederaAccount(id: string, hederaAccountId: string, hederaPrivateKeyEncrypted: string): void {

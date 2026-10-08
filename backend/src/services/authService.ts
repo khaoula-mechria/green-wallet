@@ -6,7 +6,7 @@ import { HouseholdRepository } from "../db/repositories/householdRepository.js";
 import type { Household, HouseholdType, PublicHousehold, AuthTokenPayload } from "../domain/types.js";
 import { env } from "../config/env.js";
 import { ValidationError, UnauthorizedError, ConflictError } from "../utils/errors.js";
-import type { BlockchainService } from "../blockchain/BlockchainService.js";
+import type { LedgerService } from "./ledgerService.js";
 
 export interface RegisterInput {
   id?: string;
@@ -15,9 +15,6 @@ export interface RegisterInput {
   location: string;
   password: string;
   energyType?: string;
-  /** Trusted callers only (seeding, the register route's server-side grant) —
-   * never pass a client-supplied value through. */
-  initialTokenBalance?: number;
 }
 
 export function toPublicHousehold(h: Household): PublicHousehold {
@@ -28,7 +25,7 @@ export function toPublicHousehold(h: Household): PublicHousehold {
 export class AuthService {
   private readonly households: HouseholdRepository;
 
-  constructor(db: Database, private readonly blockchain: BlockchainService) {
+  constructor(db: Database, private readonly ledger: LedgerService) {
     this.households = new HouseholdRepository(db);
   }
 
@@ -61,24 +58,19 @@ export class AuthService {
       currentProduction: 0,
       currentConsumption: 0,
       energyBalance: 0,
-      tokenBalance: input.initialTokenBalance ?? 0,
       createdAt: now,
       updatedAt: now,
     };
 
     this.households.insert(household);
 
-    // Best-effort ledger provisioning (only does real work in Hedera mode).
-    try {
-      const provisioned = await this.blockchain.provisionAccount(id);
-      if (provisioned.accountId && provisioned.encryptedPrivateKey) {
-        this.households.setHederaAccount(id, provisioned.accountId, provisioned.encryptedPrivateKey);
-        household.hederaAccountId = provisioned.accountId;
-      }
-    } catch (err) {
-      // Provisioning failure must not block registration in an MVP; the
-      // household simply stays local-only for settlement until retried.
-      console.error(`[auth] Hedera provisioning failed for ${id}:`, (err as Error).message);
+    // Create household account in the ledger.
+    const account = this.ledger.createHouseholdAccount(id, input.name);
+    household.hederaAccountId = account.id; // Store the simulated Hedera-style ID
+
+    // Issue welcome grant to prosumers and consumers (not producers).
+    if (input.type !== "producer" && env.welcomeGrantTec > 0) {
+      this.ledger.transfer("WELCOME_GRANT", "0.0.1001", account.id, env.welcomeGrantTec, "Welcome grant");
     }
 
     const token = this.issueToken(household);

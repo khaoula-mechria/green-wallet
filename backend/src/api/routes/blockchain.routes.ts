@@ -2,16 +2,17 @@ import { Router } from "express";
 import type { Container } from "../../container.js";
 import { asyncRoute } from "../../middleware/errorHandler.js";
 import { NotFoundError } from "../../utils/errors.js";
-import { BlockchainRepository } from "../../db/repositories/blockchainRepository.js";
+import { LedgerTransactionRepository } from "../../db/repositories/ledgerTransactionRepository.js";
 
 export function blockchainRoutes(c: Container): Router {
   const router = Router();
-  const repo = new BlockchainRepository(c.db);
+  const ledgerRepo = new LedgerTransactionRepository(c.db);
 
   router.get(
     "/status",
     asyncRoute(async (_req, res) => {
-      res.json({ success: true, data: c.blockchain.getStatus() });
+      const status = c.ledger.getStatus();
+      res.json({ success: true, data: status });
     })
   );
 
@@ -29,16 +30,10 @@ export function blockchainRoutes(c: Container): Router {
     asyncRoute(async (req, res) => {
       const block = c.blockchain.getBlock(Number(req.params.index));
       if (!block) throw new NotFoundError("Block");
-      const transactions = block.transactionIds.map((id) => repo.findTransactionById(id)).filter(Boolean);
+      const transactions = block.transactionIds
+        .map((id) => ledgerRepo.findById(id))
+        .filter(Boolean);
       res.json({ success: true, data: { ...block, transactions } });
-    })
-  );
-
-  router.get(
-    "/transactions",
-    asyncRoute(async (req, res) => {
-      const limit = req.query.limit ? Number(req.query.limit) : 200;
-      res.json({ success: true, data: repo.findAllTransactions(limit) });
     })
   );
 

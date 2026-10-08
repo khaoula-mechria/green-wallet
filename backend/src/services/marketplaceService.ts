@@ -49,7 +49,7 @@ export class MarketplaceService {
           `insufficient surplus: has ${fresh.energyBalance.toFixed(2)} kWh available, offer requires ${amountKwh.toFixed(2)} kWh`
         );
       }
-      this.households.adjustBalances(sellerId, -amountKwh, 0, now);
+      this.households.adjustEnergyBalance(sellerId, -amountKwh, now);
       this.offers.insert(offer);
     });
     run();
@@ -65,7 +65,7 @@ export class MarketplaceService {
 
     const now = Date.now();
     const run = this.db.transaction(() => {
-      this.households.adjustBalances(sellerId, offer.amountRemainingKwh, 0, now);
+      this.households.adjustEnergyBalance(sellerId, offer.amountRemainingKwh, now);
       this.offers.updateRemainingAndStatus(offerId, 0, "cancelled", now);
     });
     run();

@@ -1,6 +1,5 @@
--- Canonical schema. Run in full by database.ts on every boot (single source
--- of truth — the reference architecture this builds on had schema.sql and
--- initDatabase() drift apart; we avoid that by only ever executing this file).
+-- Canonical schema (Phase 0 — foundations: money and ledger).
+-- Run in full by database.ts on every boot. DB is wiped on schema version mismatch.
 
 CREATE TABLE IF NOT EXISTS households (
   id TEXT PRIMARY KEY,
@@ -14,9 +13,18 @@ CREATE TABLE IF NOT EXISTS households (
   currentProduction REAL NOT NULL DEFAULT 0,
   currentConsumption REAL NOT NULL DEFAULT 0,
   energyBalance REAL NOT NULL DEFAULT 0,
-  tokenBalance REAL NOT NULL DEFAULT 0,
   createdAt INTEGER NOT NULL,
   updatedAt INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY CHECK (id GLOB '0.0.[0-9]*'),
+  kind TEXT NOT NULL CHECK (kind IN ('household', 'treasury', 'clearing', 'grid_storage')),
+  householdId TEXT UNIQUE REFERENCES households(id),
+  label TEXT NOT NULL,
+  balance REAL NOT NULL DEFAULT 0,
+  reservedBalance REAL NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS energy_measurements (
@@ -48,32 +56,23 @@ CREATE TABLE IF NOT EXISTS energy_trades (
   pricePerKwh REAL NOT NULL,
   totalPrice REAL NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
-  blockchainTxId TEXT,
+  ledgerTxId TEXT,
   createdAt INTEGER NOT NULL,
   completedAt INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS token_transactions (
+CREATE TABLE IF NOT EXISTS ledger_transactions (
   id TEXT PRIMARY KEY,
-  type TEXT NOT NULL CHECK (type IN ('MINT', 'TRANSFER', 'TRADE_SETTLEMENT')),
-  fromHouseholdId TEXT REFERENCES households(id),
-  toHouseholdId TEXT NOT NULL REFERENCES households(id),
+  type TEXT NOT NULL,
+  asset TEXT NOT NULL CHECK (asset IN ('TEC', 'SOLAR', 'WIND', 'RECORD')),
+  fromAccountId TEXT REFERENCES accounts(id),
+  toAccountId TEXT REFERENCES accounts(id),
   amount REAL NOT NULL,
-  timestamp INTEGER NOT NULL,
-  blockchainTxId TEXT,
-  relatedTradeId TEXT
-);
-
-CREATE TABLE IF NOT EXISTS blockchain_transactions (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL CHECK (type IN ('MINT', 'TRANSFER', 'TRADE')),
-  fromId TEXT,
-  toId TEXT NOT NULL,
-  amount REAL NOT NULL,
+  feeHbar REAL NOT NULL DEFAULT 0,
+  memo TEXT NOT NULL DEFAULT '',
   timestamp INTEGER NOT NULL,
   blockIndex INTEGER,
-  hederaTransactionId TEXT,
-  payload TEXT NOT NULL
+  relatedTradeId TEXT
 );
 
 CREATE TABLE IF NOT EXISTS blockchain_blocks (
@@ -85,6 +84,11 @@ CREATE TABLE IF NOT EXISTS blockchain_blocks (
   transactionIds TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_measurements_household ON energy_measurements(householdId);
 CREATE INDEX IF NOT EXISTS idx_measurements_timestamp ON energy_measurements(timestamp);
 CREATE INDEX IF NOT EXISTS idx_offers_seller ON energy_offers(sellerId);
@@ -92,6 +96,8 @@ CREATE INDEX IF NOT EXISTS idx_offers_status ON energy_offers(status);
 CREATE INDEX IF NOT EXISTS idx_trades_seller ON energy_trades(sellerId);
 CREATE INDEX IF NOT EXISTS idx_trades_buyer ON energy_trades(buyerId);
 CREATE INDEX IF NOT EXISTS idx_trades_status ON energy_trades(status);
-CREATE INDEX IF NOT EXISTS idx_token_tx_to ON token_transactions(toHouseholdId);
-CREATE INDEX IF NOT EXISTS idx_token_tx_from ON token_transactions(fromHouseholdId);
-CREATE INDEX IF NOT EXISTS idx_blockchain_tx_timestamp ON blockchain_transactions(timestamp);
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_timestamp ON ledger_transactions(timestamp);
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_asset ON ledger_transactions(asset);
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_from ON ledger_transactions(fromAccountId);
+CREATE INDEX IF NOT EXISTS idx_ledger_tx_to ON ledger_transactions(toAccountId);
+CREATE INDEX IF NOT EXISTS idx_accounts_household ON accounts(householdId);

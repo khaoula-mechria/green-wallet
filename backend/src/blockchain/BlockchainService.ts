@@ -1,8 +1,8 @@
-import type { BlockchainBlock, BlockchainTxType } from "../domain/types.js";
+import type { BlockchainBlock } from "../domain/types.js";
 
 export interface ChainTransactionInput {
   id: string;
-  type: BlockchainTxType;
+  type: "MINT" | "TRANSFER" | "TRADE";
   fromId: string | null;
   toId: string;
   amount: number;

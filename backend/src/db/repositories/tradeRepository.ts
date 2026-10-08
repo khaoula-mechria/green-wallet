@@ -8,8 +8,8 @@ export class TradeRepository {
     this.db
       .prepare(
         `INSERT INTO energy_trades
-          (id, offerId, sellerId, buyerId, amountKwh, pricePerKwh, totalPrice, status, blockchainTxId, createdAt, completedAt)
-         VALUES (@id, @offerId, @sellerId, @buyerId, @amountKwh, @pricePerKwh, @totalPrice, @status, @blockchainTxId, @createdAt, @completedAt)`
+          (id, offerId, sellerId, buyerId, amountKwh, pricePerKwh, totalPrice, status, ledgerTxId, createdAt, completedAt)
+         VALUES (@id, @offerId, @sellerId, @buyerId, @amountKwh, @pricePerKwh, @totalPrice, @status, @ledgerTxId, @createdAt, @completedAt)`
       )
       .run(t);
   }
@@ -30,9 +30,9 @@ export class TradeRepository {
       .all(householdId, householdId) as EnergyTrade[];
   }
 
-  complete(id: string, status: TradeStatus, blockchainTxId: string | null, completedAt: number): void {
+  complete(id: string, status: TradeStatus, ledgerTxId: string | null, completedAt: number): void {
     this.db
-      .prepare(`UPDATE energy_trades SET status = ?, blockchainTxId = ?, completedAt = ? WHERE id = ?`)
-      .run(status, blockchainTxId, completedAt, id);
+      .prepare(`UPDATE energy_trades SET status = ?, ledgerTxId = ?, completedAt = ? WHERE id = ?`)
+      .run(status, ledgerTxId, completedAt, id);
   }
 }

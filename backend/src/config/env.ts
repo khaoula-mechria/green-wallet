@@ -50,9 +50,23 @@ export const env = {
   measurementMaxKwh: num(process.env.MEASUREMENT_MAX_KWH, 50),
   measurementMinIntervalMs: num(process.env.MEASUREMENT_MIN_INTERVAL_MS, 60_000),
 
-  // TEC granted server-side to newly registered consumers so they can trade.
-  // Clients can never choose their own starting balance.
-  signupGrantTec: num(process.env.SIGNUP_GRANT_TEC, isProduction ? 0 : 20),
+  // Phase 0: Ledger and money.
+  // Treasury initial funding (TEC); validators ensure >= 0.
+  treasuryInitialTec: num(process.env.TREASURY_INITIAL_TEC, 10_000),
+  // Low treasury warning threshold (TEC).
+  treasuryLowWarningTec: num(process.env.TREASURY_LOW_WARNING_TEC, 1_000),
+  // Welcome grant to new prosumers and consumers (TEC).
+  welcomeGrantTec: num(process.env.WELCOME_GRANT_TEC, 10),
+  // Grid storage initial funding (TEC); optional, sets grid pool starting balance.
+  gridStorageInitialTec: num(process.env.GRID_STORAGE_INITIAL_TEC, 500),
+  // Top-ups: enabled in dev by default, opt-in in production.
+  topupsEnabled: bool(process.env.TOPUPS_ENABLED, !isProduction),
+  // Per-top-up cap (TEC); capped here before even reaching the ledger.
+  topupMaxTec: num(process.env.TOPUP_MAX_TEC, 100),
+  // Rate limit: cooldown between top-ups per household (ms).
+  topupCooldownMs: num(process.env.TOPUP_COOLDOWN_MS, 10_000),
+  // Simulated Hedera network fee (HBAR) attached to every ledger transaction, paid by operator.
+  simulatedFeeHbar: num(process.env.SIMULATED_FEE_HBAR, 0.0001),
 
   // Blockchain mode selection. Hedera mode only activates when ALL three are set,
   // mirroring the reference system's "if TEC_TOKEN_ID set" gating pattern.
@@ -81,7 +95,12 @@ export function validateEnv(e: Env = env): string[] {
     ["SIMULATION_MINUTES_PER_TICK", e.simulationMinutesPerTick],
     ["MEASUREMENT_MAX_KWH", e.measurementMaxKwh],
     ["MEASUREMENT_MIN_INTERVAL_MS", e.measurementMinIntervalMs],
-    ["SIGNUP_GRANT_TEC", e.signupGrantTec],
+    ["TREASURY_INITIAL_TEC", e.treasuryInitialTec],
+    ["TREASURY_LOW_WARNING_TEC", e.treasuryLowWarningTec],
+    ["WELCOME_GRANT_TEC", e.welcomeGrantTec],
+    ["TOPUP_MAX_TEC", e.topupMaxTec],
+    ["TOPUP_COOLDOWN_MS", e.topupCooldownMs],
+    ["SIMULATED_FEE_HBAR", e.simulatedFeeHbar],
   ] as const) {
     if (!Number.isFinite(value) || value < 0) problems.push(`${name} must be a non-negative number`);
   }
@@ -112,5 +131,7 @@ export function assertValidEnv(e: Env = env): void {
     if (e.seedDemoData) console.warn("[config] WARNING: SEED_DEMO_DATA is on in production — demo accounts use a public password");
     if (e.simulationEnabled) console.warn("[config] WARNING: SIMULATION_ENABLED is on in production — readings are simulated");
     if (e.manualMeasurementsEnabled) console.warn("[config] WARNING: MANUAL_MEASUREMENTS_ENABLED is on in production — readings are self-reported");
+    if (e.topupsEnabled) console.warn("[config] WARNING: TOPUPS_ENABLED is on in production — real payment integration required");
+    if (e.treasuryInitialTec < e.treasuryLowWarningTec) console.warn("[config] WARNING: TREASURY_INITIAL_TEC is below TREASURY_LOW_WARNING_TEC threshold");
   }
 }

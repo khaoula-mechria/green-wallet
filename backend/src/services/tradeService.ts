@@ -71,7 +71,7 @@ export class TradeService {
         pricePerKwh: offer.pricePerKwh,
         totalPrice,
         status: "pending",
-        blockchainTxId: null,
+        ledgerTxId: null,
         createdAt: now,
         completedAt: null,
       });
@@ -88,27 +88,20 @@ export class TradeService {
       throw new ConflictError(`trade ${tradeId} was already ${trade.status} — refusing duplicate execution`);
     }
 
-    const buyer = this.households.findById(trade.buyerId)!;
-    if (buyer.tokenBalance < trade.totalPrice) {
-      this.releaseAndFail(trade.id, trade.offerId, trade.amountKwh);
-      throw new ValidationError(
-        `insufficient token balance: buyer has ${buyer.tokenBalance.toFixed(2)} TEC, needs ${trade.totalPrice.toFixed(2)} TEC`
-      );
-    }
-
     try {
       const settlement = await this.tokenService.transfer(
         trade.buyerId,
         trade.sellerId,
-        trade.totalPrice,
+        Number((trade.totalPrice).toFixed(2)), // Round to cents
         trade.id,
         "TRADE_SETTLEMENT"
       );
 
       const now = Date.now();
       const run = this.db.transaction(() => {
-        this.households.adjustBalances(trade.buyerId, trade.amountKwh, 0, now);
-        this.trades.complete(trade.id, "completed", settlement.blockchainTxId, now);
+        // Energy balance represents kWh in the buyer's possession after trade.
+        this.households.adjustEnergyBalance(trade.buyerId, trade.amountKwh, now);
+        this.trades.complete(trade.id, "completed", settlement.id, now);
       });
       run();
 

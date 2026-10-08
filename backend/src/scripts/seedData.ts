@@ -46,8 +46,13 @@ export async function seedDemoData(c: Container, log: (msg: string) => void = co
       location: h.location,
       password: SEED_PASSWORD,
       energyType: h.energyType,
-      initialTokenBalance: h.initialTokenBalance,
     });
+
+    // Phase 0: Issue seed top-ups as ledger transactions after registration.
+    if (h.initialTokenBalance > 0 && h.type !== "producer") {
+      const account = c.ledger.getHouseholdAccount(h.id);
+      c.ledger.transfer("SEED_TOPUP", null, account.id, h.initialTokenBalance, "Seed top-up (demo data)");
+    }
 
     // Seed an initial measurement so surplus is tokenized and visible immediately,
     // without waiting for the first simulation tick.

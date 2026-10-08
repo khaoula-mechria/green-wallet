@@ -38,7 +38,6 @@ export function authRoutes(c: Container): Router {
       const result = await c.auth.register({
         ...input,
         location: input.location || "Unknown",
-        initialTokenBalance: input.type === "consumer" ? env.signupGrantTec : 0,
       });
       res.status(201).json({ success: true, data: result });
     })

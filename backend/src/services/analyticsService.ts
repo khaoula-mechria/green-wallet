@@ -2,8 +2,8 @@ import type { Database } from "better-sqlite3";
 import { HouseholdRepository } from "../db/repositories/householdRepository.js";
 import { OfferRepository } from "../db/repositories/offerRepository.js";
 import { TradeRepository } from "../db/repositories/tradeRepository.js";
-import { TokenTransactionRepository } from "../db/repositories/tokenTransactionRepository.js";
-import type { BlockchainService } from "../blockchain/BlockchainService.js";
+import { AccountRepository } from "../db/repositories/accountRepository.js";
+import type { LedgerService } from "./ledgerService.js";
 
 export interface DashboardSummary {
   totalProducers: number;
@@ -16,21 +16,23 @@ export interface DashboardSummary {
   activeOffers: number;
   completedTrades: number;
   tokenCirculation: number;
-  recentTrades: ReturnType<TradeRepository["findAll"]>;
-  blockchain: ReturnType<BlockchainService["getStatus"]>;
+  treasuryBalance: number;
+  recentTrades: any[];
+  moneyInvariant: { ok: boolean; totalSupply: number; sumOfBalances: number };
+  ledgerStatus: any;
 }
 
 export class AnalyticsService {
   private readonly households: HouseholdRepository;
   private readonly offers: OfferRepository;
   private readonly trades: TradeRepository;
-  private readonly tokenTx: TokenTransactionRepository;
+  private readonly accounts: AccountRepository;
 
-  constructor(db: Database, private readonly blockchain: BlockchainService) {
+  constructor(db: Database, private readonly ledger: LedgerService) {
     this.households = new HouseholdRepository(db);
     this.offers = new OfferRepository(db);
     this.trades = new TradeRepository(db);
-    this.tokenTx = new TokenTransactionRepository(db);
+    this.accounts = new AccountRepository(db);
   }
 
   getDashboard(): DashboardSummary {
@@ -52,12 +54,21 @@ export class AnalyticsService {
       const net = h.currentProduction - h.currentConsumption;
       if (net > 0) totalSurplus += net;
       else totalDeficit += Math.abs(net);
-      tokenCirculation += h.tokenBalance;
 
       if (h.type === "producer") totalProducers += 1;
       else if (h.type === "consumer") totalConsumers += 1;
       else totalProsumers += 1;
     }
+
+    // Token circulation = sum of all household account balances
+    const accounts = this.accounts.findByKind("household");
+    for (const a of accounts) {
+      tokenCirculation += a.balance;
+    }
+
+    const invariant = this.ledger.checkMoneyInvariant();
+    const status = this.ledger.getStatus();
+    const treasury = this.ledger.treasuryBalance();
 
     return {
       totalProducers,
@@ -70,8 +81,10 @@ export class AnalyticsService {
       activeOffers: this.offers.findActive().length,
       completedTrades: trades.filter((t) => t.status === "completed").length,
       tokenCirculation: round2(tokenCirculation),
+      treasuryBalance: treasury,
       recentTrades: trades.slice(0, 10),
-      blockchain: this.blockchain.getStatus(),
+      moneyInvariant: invariant,
+      ledgerStatus: status,
     };
   }
 

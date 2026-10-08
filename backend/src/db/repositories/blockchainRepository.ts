@@ -1,34 +1,12 @@
 import type { Database } from "better-sqlite3";
-import type { BlockchainBlock, BlockchainTransaction } from "../../domain/types.js";
+import type { BlockchainBlock } from "../../domain/types.js";
 
 export class BlockchainRepository {
   constructor(private readonly db: Database) {}
 
-  insertTransaction(t: BlockchainTransaction): void {
-    this.db
-      .prepare(
-        `INSERT INTO blockchain_transactions
-          (id, type, fromId, toId, amount, timestamp, blockIndex, hederaTransactionId, payload)
-         VALUES (@id, @type, @fromId, @toId, @amount, @timestamp, @blockIndex, @hederaTransactionId, @payload)`
-      )
-      .run(t);
-  }
-
-  setTransactionBlock(id: string, blockIndex: number): void {
-    this.db.prepare(`UPDATE blockchain_transactions SET blockIndex = ? WHERE id = ?`).run(blockIndex, id);
-  }
-
-  findTransactionById(id: string): BlockchainTransaction | undefined {
-    return this.db
-      .prepare(`SELECT * FROM blockchain_transactions WHERE id = ?`)
-      .get(id) as BlockchainTransaction | undefined;
-  }
-
-  findAllTransactions(limit = 200): BlockchainTransaction[] {
-    return this.db
-      .prepare(`SELECT * FROM blockchain_transactions ORDER BY timestamp DESC LIMIT ?`)
-      .all(limit) as BlockchainTransaction[];
-  }
+  // Note: blockchain_transactions table is deprecated (Phase 0+). Ledger transactions
+  // are stored in ledger_transactions table instead. This class is kept for backwards
+  // compatibility with the hash-chain blocks (blockchain_blocks table).
 
   insertBlock(b: BlockchainBlock): void {
     this.db

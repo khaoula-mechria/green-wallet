@@ -22,6 +22,11 @@ const httpServer = createServer(app);
 attachWebSocketServer(httpServer, container.notifications);
 
 async function start() {
+  // Phase 0 is local-mode only.
+  if (isHederaConfigured) {
+    console.warn("[server] WARNING: HEDERA_* environment variables are set, but Phase 0 runs in local-mode only. Ignoring Hedera configuration.");
+  }
+
   const householdCount = (db.prepare(`SELECT COUNT(*) as n FROM households`).get() as { n: number }).n;
   if (householdCount === 0 && env.seedDemoData) {
     console.log("[server] empty database detected — seeding demo households (5 producers + 5 consumers)");
@@ -30,7 +35,7 @@ async function start() {
 
   httpServer.listen(env.port, () => {
     console.log(`[server] listening on http://localhost:${env.port} (${env.nodeEnv})`);
-    console.log(`[server] blockchain mode: ${container.blockchain.mode} ${isHederaConfigured ? "(real Hedera testnet)" : "(local simulated ledger — set HEDERA_OPERATOR_ID/HEDERA_OPERATOR_KEY/HEDERA_TOKEN_ID to switch)"}`);
+    console.log(`[server] blockchain mode: ${container.blockchain.mode} (local simulated ledger — Hedera integration coming in a future phase)`);
   });
 
   if (env.simulationEnabled) {
