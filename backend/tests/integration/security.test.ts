@@ -166,6 +166,24 @@ describe("Phase 0 — private data is owner-only", () => {
   });
 });
 
+describe("Rate limits fit a polling frontend", () => {
+  it("lets an open page poll freely: 300 reads in a minute are all served", async () => {
+    const { app } = buildApp();
+    for (let i = 0; i < 300; i++) {
+      const res = await request(app).get("/api/market/status");
+      expect(res.status, `read #${i + 1}`).toBe(200);
+    }
+  });
+
+  it("still limits writes: the 121st login attempt in a minute is refused", async () => {
+    const { app } = buildApp();
+    const attempt = () => request(app).post("/api/auth/login").send({ id: "nobody", password: "wrong" });
+    for (let i = 0; i < 120; i++) expect((await attempt()).status).toBe(401);
+    const blocked = await attempt();
+    expect(blocked.status).toBe(429);
+  });
+});
+
 describe("Phase 0 — WebSocket notifications are authenticated", () => {
   let server: Server;
   let container: Container;

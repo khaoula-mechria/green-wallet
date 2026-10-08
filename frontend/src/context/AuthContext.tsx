@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, getStoredHouseholdId, setSession, clearSession, getToken } from "../api/client";
+import { api, ApiError, getStoredHouseholdId, setSession, clearSession, getToken } from "../api/client";
 import type { Household, RegisterInput } from "../types";
 
 interface AuthState {
@@ -27,9 +27,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const h = await api.get<Household>(`/households/${id}`);
       setHousehold(h);
-    } catch {
-      clearSession();
-      setHousehold(null);
+    } catch (err) {
+      // Only a rejected session logs out. A rate limit (429), a server error or a
+      // network blip keeps the household; the next refresh tries again.
+      if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
+        clearSession();
+        setHousehold(null);
+      }
     } finally {
       setLoading(false);
     }

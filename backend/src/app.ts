@@ -14,10 +14,12 @@ export function createApp(container: Container) {
   if (env.corsOrigin !== false) app.use(cors({ origin: env.corsOrigin }));
   app.use(express.json({ limit: "16kb" }));
 
-  // Applies to mutating/sensitive endpoints only, matching the reference
-  // architecture's documented gap being closed here.
-  const limiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false });
-  app.use("/api", limiter);
+  // Writes (login, offers, purchases, readings, top-ups) are tightly limited; reads get
+  // a separate, generous budget, because every open page polls the API every 1-3 s
+  // (a single tab makes ~150-200 reads a minute).
+  const isRead = (req: express.Request) => req.method === "GET" || req.method === "HEAD";
+  app.use("/api", rateLimit({ windowMs: 60_000, limit: 120, skip: isRead, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api", rateLimit({ windowMs: 60_000, limit: 600, skip: (req) => !isRead(req), standardHeaders: true, legacyHeaders: false }));
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
