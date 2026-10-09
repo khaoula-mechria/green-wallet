@@ -8,7 +8,8 @@ Authenticated routes require `Authorization: Bearer <token>` (JWT from login/reg
 Mutating routes always act on the authenticated household.
 
 Auth column: **—** public · **required** any logged-in household · **self** only the
-household the data belongs to (others get `403`).
+household the data belongs to (others get `403`) · **operator** only an operator-console
+token (household tokens get `403`).
 
 Request bodies are validated strictly: unknown fields are rejected with `400`.
 
@@ -18,12 +19,31 @@ Request bodies are validated strictly: unknown fields are rejected with `400`.
 |---|---|---|---|
 | POST | `/auth/register` | `{ id?, name, type, location?, password, energyType?, batteryCapacityKwh? }` | — |
 | POST | `/auth/login` | `{ id, password }` | — |
+| POST | `/auth/operator-login` | `{ password }` | — |
 
 `type` is `producer` \| `prosumer` \| `consumer`. Energy source by role: producers
 `solar` or `wind`, prosumers `solar`, consumers `grid`. Only prosumers may have a battery
 (`batteryCapacityKwh`, default 10, max 50). Prosumers and consumers receive the welcome
 grant from the treasury; balances can never be set by the client. Response:
 `{ household, token }`.
+
+`/auth/operator-login` checks `OPERATOR_PASSWORD` (development default `operator123`;
+in production the console is closed unless it is set, at least 12 characters) and returns
+`{ token }`. The token's subject is `@operator`, which no household id can be, so it can
+never read a household's private data.
+
+## Operator console
+
+| Method | Path | Body | Auth |
+|---|---|---|---|
+| POST | `/admin/households` | same as `/auth/register` | operator |
+| POST | `/admin/households/:id/credit` | `{ amount }` (0 < amount ≤ 1000 TEC) | operator |
+
+`/admin/households` adds a producer, prosumer or consumer under the same rules as a
+self-registration (including the welcome grant) and returns the new household; the
+operator is not logged in as it. `/admin/households/:id/credit` moves TEC from the
+treasury to the household (a ledger transfer of type `OPERATOR_FUNDING`, so the money
+supply does not change) and returns the updated household.
 
 ## Households
 

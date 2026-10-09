@@ -48,13 +48,24 @@ export function MarketplacePage() {
   async function purchase(offer: EnergyOffer) {
     setPurchaseError(null);
     setPurchaseSuccess(null);
-    const amount = Number(purchaseAmounts[offer.id] || offer.amountRemainingKwh);
-    if (!amount || amount <= 0) {
-      setPurchaseError("Enter a valid amount to purchase.");
-      return;
-    }
+    const typed = purchaseAmounts[offer.id];
     setPurchasingId(offer.id);
     try {
+      // "Buy everything listed": read what is left right now, since neighbours may have just bought part of it.
+      let amount = Number(typed);
+      if (!typed) {
+        const fresh = await api.get<EnergyOffer>(`/market/offers/${offer.id}`);
+        if (fresh.status !== "active" || fresh.amountRemainingKwh <= 0) {
+          setPurchaseError("This offer has just sold out.");
+          await reload();
+          return;
+        }
+        amount = fresh.amountRemainingKwh;
+      }
+      if (!amount || amount <= 0) {
+        setPurchaseError("Enter a valid amount to purchase.");
+        return;
+      }
       await api.post(`/market/offers/${offer.id}/purchase`, { amountKwh: amount });
       setPurchaseSuccess(`Bought ${amount.toFixed(2)} kWh — delivered into your space in the shared battery.`);
       setPurchaseAmounts((p) => ({ ...p, [offer.id]: "" }));

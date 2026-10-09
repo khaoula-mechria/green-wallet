@@ -476,7 +476,7 @@ erDiagram
 - **Base path:** `/api`.
 - **Responses:** `{ "success": true, "data": ... }` on success, `{ "success": false, "error": { "code", "message" } }` on error.
 - **Auth:** 🔒 means the endpoint needs `Authorization: Bearer <JWT>` from login or register; 👤 means it is restricted to the caller's own household. 🛠 means operator token only (`requireOperator`, `middleware/auth.ts`); a household token gets 403.
-- **Rate limits:** 120 writes and 600 reads per minute per client (`app.ts:21-22`).
+- **Rate limits:** 120 writes and 1500 reads per minute per client IP (`app.ts`). The live dashboard alone polls about 300 reads a minute.
 - **Health check:** `GET /health` → `{ "status": "ok" }` (`app.ts:24`).
 
 | Method | Path | Purpose | Body / query | Code |
@@ -660,7 +660,7 @@ VITE_API_MODE=real npm run dev    # http://localhost:5173, proxies /api and /ws 
 
 - **Demo logins:** `producer-1..2`, `prosumer-1..5`, `consumer-1..4`, all with password `password123` (`seedData.ts:25-39`).
 - **Operator console:** http://localhost:5173/admin/login, password `operator123` in development.
-- **Docker:** `docker compose up` (backend :4000, frontend :8080). It runs `NODE_ENV=production`, so it needs `JWT_SECRET` and `KEY_ENCRYPTION_SECRET` (≥ 32 characters, different) in a `.env` next to `docker-compose.yml`. Demo features are off unless enabled.
+- **Docker:** `docker compose up` (backend :4000, frontend :8080, built in real mode). It runs `NODE_ENV=production`, so it needs `JWT_SECRET` and `KEY_ENCRYPTION_SECRET` (≥ 32 characters, different) in a `.env` next to `docker-compose.yml` (template: root `.env.example`). Demo features and the operator console are off unless enabled there.
 
 **Backend `.env` variable names** (all in `backend/.env.example`, all read in `env.ts`):
 
@@ -694,7 +694,7 @@ VITE_API_MODE=real npm run dev    # http://localhost:5173, proxies /api and /ws 
 8. **Frontend defaults to mock mode** (`client.ts:36`). Screens show browser mock data unless `VITE_API_MODE=real`.
 9. **Two separate engines.** The mock engine in `frontend/src/mock/engine.ts` must be kept in sync with the backend by hand.
 10. **WebSocket hub is unused by the frontend**, which polls instead. Only `TRADE_COMPLETED` is ever sent (`market.routes.ts:95`).
-11. **Unused env var:** `docker-compose.yml` sets `SIGNUP_GRANT_TEC`, which no code reads (the backend uses `WELCOME_GRANT_TEC`).
+11. **Docker configuration (fixed):** `docker-compose.yml` used to set `SIGNUP_GRANT_TEC`, which no code reads, and the frontend image was built in mock mode. Compose now passes `WELCOME_GRANT_TEC`, `DEMO_MARKET_ACTIVITY` and `OPERATOR_PASSWORD`, and `frontend/Dockerfile` builds with `VITE_API_MODE=real`.
 12. **Privacy inconsistency:** `GET /households` and `/households/:id` return every household's `tokenBalance` and `settings`, while balance and history routes are self-only (`assertSelf`).
 13. **TEC runs out in long runs.** Consumers have no income, so a long replay ends with every buyer at 0 TEC, no local trades, and everything imported (§11). The live demo works around this with simulated daily top-ups (`DEMO_MARKET_ACTIVITY`); a replay must handle it itself.
 14. **"Neighbours" is only a drawing.** The network has no topology, distance or line constraints; every household trades with everyone.

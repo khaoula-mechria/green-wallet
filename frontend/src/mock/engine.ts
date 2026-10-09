@@ -1262,6 +1262,13 @@ export class Engine {
     return this.offers.filter((o) => o.status === "active").map((o) => this.toPublicOffer(o));
   }
 
+  /** One offer, whatever its status (GET /market/offers/:id). */
+  getOffer(id: string): EnergyOffer {
+    const o = this.offers.find((x) => x.id === id);
+    if (!o) throw notFound("Offer");
+    return this.toPublicOffer(o);
+  }
+
   offersOf(id: string): EnergyOffer[] {
     return this.offers.filter((o) => o.sellerId === id).sort((a, b) => b.createdAt - a.createdAt).map((o) => this.toPublicOffer(o));
   }

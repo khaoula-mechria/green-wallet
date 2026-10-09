@@ -16,10 +16,10 @@ export function createApp(container: Container) {
 
   // Writes (login, offers, purchases, readings, top-ups) are tightly limited; reads get
   // a separate, generous budget, because every open page polls the API every 1-3 s
-  // (a single tab makes ~150-200 reads a minute).
+  // (the live dashboard alone makes ~300 reads a minute, so a few tabs need room).
   const isRead = (req: express.Request) => req.method === "GET" || req.method === "HEAD";
   app.use("/api", rateLimit({ windowMs: 60_000, limit: 120, skip: isRead, standardHeaders: true, legacyHeaders: false }));
-  app.use("/api", rateLimit({ windowMs: 60_000, limit: 600, skip: (req) => !isRead(req), standardHeaders: true, legacyHeaders: false }));
+  app.use("/api", rateLimit({ windowMs: 60_000, limit: 1500, skip: (req) => !isRead(req), standardHeaders: true, legacyHeaders: false }));
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
 

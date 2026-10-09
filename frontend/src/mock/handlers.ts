@@ -82,6 +82,8 @@ const routes: Route[] = [
   // marketplace (bilateral offers)
   { method: "GET", pattern: /^\/market\/offers$/, auth: false, handler: () => e().activeOffers() },
   { method: "GET", pattern: /^\/market\/offers\/mine$/, auth: true, handler: (c) => e().offersOf(me(c)) },
+  // After /mine, so that "mine" is not read as an offer id.
+  { method: "GET", pattern: /^\/market\/offers\/([^/]+)$/, auth: false, handler: ({ params }) => e().getOffer(params[0]) },
   { method: "POST", pattern: /^\/market\/offers$/, auth: true, handler: (c) => e().createOffer(me(c), Number(c.body?.amountKwh), Number(c.body?.pricePerKwh)) },
   { method: "POST", pattern: /^\/market\/offers\/([^/]+)\/cancel$/, auth: true, handler: (c) => e().cancelOffer(me(c), c.params[0]) },
   {

@@ -17,7 +17,10 @@ services:
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       SIMULATION_ENABLED: ${SIMULATION_ENABLED:-false}
       MANUAL_MEASUREMENTS_ENABLED: ${MANUAL_MEASUREMENTS_ENABLED:-false}
-      SIGNUP_GRANT_TEC: ${SIGNUP_GRANT_TEC:-0}
+      DEMO_MARKET_ACTIVITY: ${DEMO_MARKET_ACTIVITY:-false}
+      WELCOME_GRANT_TEC: ${WELCOME_GRANT_TEC:-10}
+      # Operator console (/admin): closed unless set (>= 12 characters).
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-}
       SIMULATION_TICK_MS: 5000
       SIMULATION_MINUTES_PER_TICK: 30
       # Leave blank (default) for local/simulated blockchain mode. See backend/.env.example.
