@@ -1,5 +1,6 @@
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend } from "recharts";
+import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AuctionResult, PriceBand } from "../types";
+import { AXIS_TICK, CHART_MARGIN, COLORS, ChartFrame, ChartTooltip, Key, Legend, niceTicks } from "./ui";
 
 /** Supply (sellers, cheapest first) and demand (buyers, highest first) step
  * curves; the clearing price sits where they cross (DESIGN §4.2). */
@@ -20,7 +21,6 @@ export function MeritOrderChart({ auction, band }: { auction: AuctionResult; ban
   };
   const supply = curve(sells);
   const demand = curve(buys);
-
   const xs = [...new Set([...supply, ...demand].map((d) => Math.round(d.q * 1000) / 1000))].sort((a, b) => a - b);
   const at = (pts: Array<{ q: number; p: number }>, q: number) => {
     if (pts.length === 0 || q > pts[pts.length - 1].q + 1e-9) return null;
@@ -28,22 +28,51 @@ export function MeritOrderChart({ auction, band }: { auction: AuctionResult; ban
     return hit ? hit.p : null;
   };
   const data = xs.map((q) => ({ q, supply: at(supply, q), demand: at(demand, q) }));
+  const top = Math.ceil((band.ceiling + 0.02) * 100) / 100;
+  const xTicks = niceTicks(xs[xs.length - 1] ?? 1);
 
   return (
-    <ResponsiveContainer width="100%" height={260}>
-      <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8e4" />
-        <XAxis dataKey="q" type="number" domain={[0, "dataMax"]} tick={{ fontSize: 11 }} unit=" kWh" />
-        <YAxis domain={[0, Math.ceil((band.ceiling + 0.02) * 100) / 100]} tick={{ fontSize: 11 }} />
-        <Tooltip formatter={(v) => (typeof v === "number" ? v.toFixed(3) : "—")} labelFormatter={(q) => `${Number(q).toFixed(2)} kWh`} />
-        <Legend />
-        {auction.clearingPrice !== null && (
-          <ReferenceLine y={auction.clearingPrice} stroke="#16a34a" strokeDasharray="5 3" label={{ value: `clearing ${auction.clearingPrice.toFixed(3)}`, fontSize: 11, position: "insideTopLeft" }} />
-        )}
-        {auction.volume > 0 && <ReferenceLine x={Math.round(auction.volume * 1000) / 1000} stroke="#5b6b63" strokeDasharray="3 3" />}
-        <Line type="stepBefore" dataKey="supply" name="Supply (sellers)" stroke="#16a34a" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-        <Line type="stepBefore" dataKey="demand" name="Demand (buyers)" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-      </LineChart>
-    </ResponsiveContainer>
+    <figure className="figure">
+      <Legend>
+        <Key kind="line" color={COLORS.supply}>Supply — sellers, cheapest first</Key>
+        <Key kind="line" color={COLORS.demand}>Demand — buyers, most eager first</Key>
+      </Legend>
+      <ChartFrame y="price limit, TEC per kWh" x="kWh offered or wanted, added up">
+      <ResponsiveContainer width="100%" height={250}>
+        <LineChart data={data} margin={CHART_MARGIN}>
+          <CartesianGrid stroke={COLORS.ruleSoft} />
+          <XAxis dataKey="q" type="number" domain={[0, xTicks[xTicks.length - 1]]} ticks={xTicks} tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: COLORS.rule }} />
+          <YAxis width={40} domain={[0, top]} ticks={[0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]} tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={(v: number) => v.toFixed(2)} />
+          <Tooltip
+            cursor={{ stroke: COLORS.ink, strokeWidth: 1 }}
+            content={({ active, payload, label }) => (
+              <ChartTooltip
+                active={active}
+                title={`${Number(label).toFixed(2)} kWh`}
+                rows={(payload ?? [])
+                  .filter((p) => typeof p.value === "number")
+                  .map((p) => ({
+                    label: p.dataKey === "supply" ? "Seller asks" : "Buyer offers",
+                    value: `${(p.value as number).toFixed(3)}`,
+                    color: p.dataKey === "supply" ? COLORS.supply : COLORS.demand,
+                  }))}
+              />
+            )}
+          />
+          {auction.clearingPrice !== null && (
+            <ReferenceLine
+              y={auction.clearingPrice}
+              stroke={COLORS.ink}
+              strokeWidth={1}
+              label={{ value: `clears at ${auction.clearingPrice.toFixed(3)}`, fontSize: 11, fill: COLORS.ink, position: "insideTopRight", fontFamily: "Geist Mono, monospace" }}
+            />
+          )}
+          {auction.volume > 0 && <ReferenceLine x={Math.round(auction.volume * 1000) / 1000} stroke={COLORS.ink3} strokeWidth={1} />}
+          <Line type="stepBefore" dataKey="supply" stroke={COLORS.supply} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
+          <Line type="stepBefore" dataKey="demand" stroke={COLORS.demand} strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer>
+      </ChartFrame>
+    </figure>
   );
 }

@@ -53,7 +53,7 @@ export function createContainer(db: Database): Container {
   const trades = new TradeService(db, ledger, certificates, grid, clock);
   const market = new MarketService(db, clock, grid, auction);
   const analytics = new AnalyticsService(db, ledger, grid, clock, auction);
-  const simulation = new SimulationService(db, measurements, market, clock);
+  const simulation = new SimulationService(db, measurements, market, clock, { marketplace, trades, grid, ledger });
   const notifications = new NotificationHub();
 
   return {

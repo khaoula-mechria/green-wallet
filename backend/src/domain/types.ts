@@ -363,5 +363,7 @@ export interface DashboardSummary {
 
 export interface AuthTokenPayload {
   householdId: string;
-  type: HouseholdType;
+  type: HouseholdType | "operator";
+  /** Set only on operator-console tokens. */
+  role?: "operator";
 }

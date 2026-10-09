@@ -237,10 +237,16 @@ describe("Phase 0 — WebSocket notifications are authenticated", () => {
 
 describe("Phase 0 — production configuration is validated", () => {
   const strong = (c: string) => c.repeat(40);
-  const prod = { ...env, isProduction: true, corsOrigin: false as const, jwtSecret: strong("a"), keyEncryptionSecret: strong("b") };
+  // In production OPERATOR_PASSWORD defaults to empty: the operator console stays closed.
+  const prod = { ...env, isProduction: true, corsOrigin: false as const, jwtSecret: strong("a"), keyEncryptionSecret: strong("b"), operatorPassword: "" };
 
   it("accepts a properly configured production environment", () => {
     expect(validateEnv(prod)).toEqual([]);
+  });
+
+  it("refuses a short operator-console password in production", () => {
+    expect(validateEnv({ ...prod, operatorPassword: "operator123" }).join()).toMatch(/OPERATOR_PASSWORD/);
+    expect(validateEnv({ ...prod, operatorPassword: strong("c") })).toEqual([]);
   });
 
   it("refuses placeholder, short or shared secrets and wildcard CORS", () => {
@@ -257,5 +263,63 @@ describe("Phase 0 — production configuration is validated", () => {
 
   it("rejects invalid numeric settings everywhere", () => {
     expect(validateEnv({ ...env, isProduction: false, port: Number("abc") }).join()).toMatch(/PORT/);
+  });
+});
+
+describe("operator console login", () => {
+  let app: ReturnType<typeof buildApp>["app"];
+  beforeEach(() => ({ app } = buildApp()));
+
+  it("issues a token for the operator password and refuses a wrong one", async () => {
+    const ok = await request(app).post("/api/auth/operator-login").send({ password: env.operatorPassword });
+    expect(ok.status).toBe(200);
+    expect(typeof ok.body.data.token).toBe("string");
+
+    const bad = await request(app).post("/api/auth/operator-login").send({ password: "nope" });
+    expect(bad.status).toBe(401);
+  });
+
+  it("never lets the operator token read a household's private data", async () => {
+    await request(app).post("/api/auth/register").send({ id: "home-1", name: "Home", type: "consumer", password: "secret123" });
+    const { body } = await request(app).post("/api/auth/operator-login").send({ password: env.operatorPassword });
+    const wallet = await request(app).get("/api/wallet/home-1").set("Authorization", `Bearer ${body.data.token}`);
+    expect(wallet.status).toBe(403);
+  });
+});
+
+describe("operator console actions", () => {
+  let app: ReturnType<typeof buildApp>["app"];
+  let container: Container;
+  beforeEach(() => ({ app, container } = buildApp()));
+
+  const operatorToken = async () =>
+    (await request(app).post("/api/auth/operator-login").send({ password: env.operatorPassword })).body.data.token as string;
+
+  it("lets the operator add a household and credit it from the treasury", async () => {
+    const token = await operatorToken();
+    const created = await request(app)
+      .post("/api/admin/households")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ id: "new-home", name: "New Home", type: "prosumer", password: "secret123", batteryCapacityKwh: 6 });
+    expect(created.status).toBe(201);
+    expect(created.body.data.type).toBe("prosumer");
+    expect(created.body.data.batteryCapacityKwh).toBe(6);
+
+    const before = container.ledger.checkMoneyInvariant().totalSupply;
+    const credited = await request(app).post("/api/admin/households/new-home/credit").set("Authorization", `Bearer ${token}`).send({ amount: 25 });
+    expect(credited.status).toBe(200);
+    expect(credited.body.data.tokenBalance).toBe(env.welcomeGrantTec + 25);
+    expect(container.ledger.checkMoneyInvariant().totalSupply).toBe(before); // moved from the treasury, not created
+  });
+
+  it("refuses household tokens and anonymous calls", async () => {
+    const home = await request(app).post("/api/auth/register").send({ id: "home-2", name: "Home", type: "consumer", password: "secret123" });
+    const asHousehold = await request(app)
+      .post("/api/admin/households")
+      .set("Authorization", `Bearer ${home.body.data.token}`)
+      .send({ name: "X", type: "consumer", password: "secret123" });
+    expect(asHousehold.status).toBe(403);
+    const anonymous = await request(app).post("/api/admin/households/home-2/credit").send({ amount: 5 });
+    expect(anonymous.status).toBe(401);
   });
 });

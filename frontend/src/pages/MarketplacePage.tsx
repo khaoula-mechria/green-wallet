@@ -3,12 +3,15 @@ import { api, ApiError } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
 import { fmtPrice, fmtSimTime } from "../format";
-import type { EnergyOffer, MarketStatus } from "../types";
+import { PageHead, Section } from "../components/ui";
+import { Link } from "react-router-dom";
+import type { DashboardSummary, EnergyOffer, MarketStatus } from "../types";
 
 export function MarketplacePage() {
   const { household, refresh } = useAuth();
   const { data, loading, reload } = usePolling(() => api.get<EnergyOffer[]>("/market/offers"), 2500);
   const { data: status } = usePolling(() => api.get<MarketStatus>("/market/status"), 2500);
+  const { data: summary } = usePolling(() => api.get<DashboardSummary>("/dashboard"), 5000);
 
   const [amountKwh, setAmountKwh] = useState("");
   const [pricePerKwh, setPricePerKwh] = useState("");
@@ -66,95 +69,107 @@ export function MarketplacePage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>Marketplace</h1>
-          <p>Fixed-price offers between households (bilateral contracts), next to the automatic auction.</p>
-        </div>
-      </div>
+      <PageHead
+        kicker="05 · The market"
+        title={
+          <>
+            Deals <em>between neighbours</em>
+          </>
+        }
+        lede="Fixed-price offers — bilateral contracts that sit beside the automatic auction. The seller names the price, the buyer chooses the seller, and the energy is delivered into the buyer's space in the shared battery."
+      />
 
-      <div className="grid-2" style={{ marginBottom: 16 }}>
+      <Section
+        num="5.1"
+        title={canSell ? "List energy you own" : "Producers sell at auction"}
+        note={canSell ? "You can only sell what you own now. Listed kWh stay where they are, reserved, until sold, cancelled or expired." : undefined}
+      >
         {canSell ? (
-          <div className="card">
-            <div className="section-title">List energy you own</div>
-            {formError && <div className="alert alert-error">{formError}</div>}
-            {formSuccess && <div className="alert alert-success">{formSuccess}</div>}
-            <form onSubmit={createOffer} className="form-row" style={{ alignItems: "flex-end" }}>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label className="label">Amount (kWh)</label>
-                <input className="input" type="number" min="0.1" step="0.1" value={amountKwh} onChange={(e) => setAmountKwh(e.target.value)} required />
-              </div>
-              <div className="field" style={{ marginBottom: 0 }}>
-                <label className="label">Price (TEC / kWh)</label>
-                <input
-                  className="input"
-                  type="number"
-                  min={status?.band.floor}
-                  max={status?.band.ceiling}
-                  step="0.005"
-                  value={pricePerKwh}
-                  placeholder={status ? status.avg24h.toFixed(3) : ""}
-                  onChange={(e) => setPricePerKwh(e.target.value)}
-                  required
-                />
-              </div>
-              <button className="btn btn-primary" disabled={creating}>
-                {creating ? "Listing…" : "Create offer"}
-              </button>
-            </form>
-            <p className="hint">
-              You can list <strong>{household?.listableKwh.toFixed(2)} kWh</strong> (stored energy + battery above your{" "}
-              {household?.settings.batterySell.keepPercent}% reserve, minus what is already listed).
+          <div className="columns-wide">
+            <div>
+              {formError && <div className="alert alert-error">{formError}</div>}
+              {formSuccess && <div className="alert alert-success">{formSuccess}</div>}
+              <form onSubmit={createOffer}>
+                <div className="form-row" style={{ alignItems: "flex-end" }}>
+                  <div className="field">
+                    <label className="label">Amount, kWh</label>
+                    <input className="input" type="number" min="0.1" step="0.1" value={amountKwh} onChange={(e) => setAmountKwh(e.target.value)} required />
+                  </div>
+                  <div className="field">
+                    <label className="label">Price, TEC per kWh</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={status?.band.floor}
+                      max={status?.band.ceiling}
+                      step="0.005"
+                      value={pricePerKwh}
+                      placeholder={status ? status.avg24h.toFixed(3) : ""}
+                      onChange={(e) => setPricePerKwh(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="field" style={{ flex: "0 0 auto" }}>
+                    <button className="btn btn-primary" disabled={creating}>
+                      {creating ? "Listing…" : "Create offer"}
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <p className="hint">
+                Available to list: <strong>{household?.listableKwh.toFixed(2)} kWh</strong> — stored energy plus battery above your{" "}
+                {household?.settings.batterySell.keepPercent}% reserve, less what is already listed.
+              </p>
+            </div>
+            <div>
+              <h3 className="sub-head">Pricing it</h3>
               {status && (
-                <>
-                  {" "}
-                  Suggested price: last auction <strong>{fmtPrice(status.lastPrice)}</strong>, 24h average{" "}
-                  <strong>{fmtPrice(status.avg24h)}</strong>. Allowed range {status.band.floor.toFixed(2)}–{status.band.ceiling.toFixed(2)}.
-                </>
+                <dl className="kv">
+                  <div>
+                    <dt>Last auction price</dt>
+                    <dd>{fmtPrice(status.lastPrice)}</dd>
+                  </div>
+                  <div>
+                    <dt>24 h average</dt>
+                    <dd>{fmtPrice(status.avg24h)}</dd>
+                  </div>
+                  <div>
+                    <dt>Allowed range</dt>
+                    <dd>
+                      {status.band.floor.toFixed(2)} – {status.band.ceiling.toFixed(2)}
+                    </dd>
+                  </div>
+                </dl>
               )}
-            </p>
+            </div>
           </div>
         ) : (
-          <div className="card">
-            <div className="section-title">Producers sell through the auction</div>
-            <p className="hint">
-              Producers have no storage, so their output is sold automatically in the auction every interval. Forward
-              contracts on future production are future work.
-            </p>
-          </div>
+          <p className="page-lede">
+            A producer has no storage, so its output is sold automatically in the auction every interval. Contracts on future production are future work.
+          </p>
         )}
-        <div className="card">
-          <div className="section-title">How delivery works</div>
-          <ul className="steps">
-            <li>Bought energy is delivered into <strong>your space in the shared battery</strong>.</li>
-            <li>It covers your next deficits and decays 1% per simulated hour, like any stored energy.</li>
-            <li>Its green certificates are transferred to you with the kWh.</li>
-            <li>
-              You can receive at most <strong>{household?.storageSpaceKwh.toFixed(2)} kWh</strong> right now (cap per household
-              and community storage space).
-            </li>
-            <li>Offers expire after 24 simulated hours.</li>
-          </ul>
-        </div>
-      </div>
+      </Section>
 
-      <div className="card">
-        <div className="section-title">Active offers</div>
+      <Section
+        num="5.2"
+        title="Open offers"
+        note={`Delivered into your rented space: you can receive ${household?.storageSpaceKwh.toFixed(2)} kWh right now. Stored energy decays 1% per simulated hour.`}
+      >
         {purchaseError && <div className="alert alert-error">{purchaseError}</div>}
         {purchaseSuccess && <div className="alert alert-success">{purchaseSuccess}</div>}
         {loading && !data ? (
-          <div className="empty-state">Loading…</div>
+          <div className="empty-state">Reading the offers…</div>
         ) : !data || data.length === 0 ? (
-          <div className="empty-state">No active offers right now.</div>
+          <div className="empty-state">No offers are open right now.</div>
         ) : (
           <table>
             <thead>
               <tr>
                 <th>Seller</th>
-                <th>Available (kWh)</th>
-                <th>Price (TEC/kWh)</th>
+                <th className="num">Available kWh</th>
+                <th className="num">Price</th>
                 <th>Expires</th>
-                <th>Amount to buy</th>
+                <th style={{ width: 130 }}>Amount to buy</th>
                 <th></th>
               </tr>
             </thead>
@@ -163,11 +178,11 @@ export function MarketplacePage() {
                 const own = o.sellerId === household?.id;
                 return (
                   <tr key={o.id}>
-                    <td>{o.sellerName}</td>
-                    <td>{o.amountRemainingKwh.toFixed(2)}</td>
-                    <td>{o.pricePerKwh.toFixed(3)}</td>
-                    <td className="muted">{fmtSimTime(o.expiresAtSimTime)}</td>
-                    <td style={{ width: 120 }}>
+                    <td className="cell-name">{o.sellerName}</td>
+                    <td className="num">{o.amountRemainingKwh.toFixed(2)}</td>
+                    <td className="num">{o.pricePerKwh.toFixed(3)}</td>
+                    <td className="mono muted">{fmtSimTime(o.expiresAtSimTime)}</td>
+                    <td>
                       <input
                         className="input"
                         type="number"
@@ -180,9 +195,9 @@ export function MarketplacePage() {
                         disabled={own}
                       />
                     </td>
-                    <td>
-                      <button className="btn btn-primary" disabled={own || purchasingId === o.id} onClick={() => purchase(o)}>
-                        {own ? "Your offer" : purchasingId === o.id ? "Buying…" : "Buy"}
+                    <td className="num">
+                      <button className="btn btn-primary btn-small" disabled={own || purchasingId === o.id} onClick={() => purchase(o)}>
+                        {own ? "Yours" : purchasingId === o.id ? "Buying…" : "Buy"}
                       </button>
                     </td>
                   </tr>
@@ -191,7 +206,44 @@ export function MarketplacePage() {
             </tbody>
           </table>
         )}
-      </div>
+      </Section>
+
+      <Section title="Recent trades" note="Completed marketplace deals across the grid.">
+        {!summary || summary.recentTrades.length === 0 ? (
+          <div className="empty-state">No marketplace trades yet.</div>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Seller</th>
+                  <th>Buyer</th>
+                  <th className="num">kWh</th>
+                  <th className="num">Price</th>
+                  <th className="num">Total TEC</th>
+                  <th>When</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.recentTrades.map((t) => (
+                  <tr key={t.id}>
+                    <td>
+                      <Link to={`/households/${t.sellerId}`}>{t.sellerName}</Link>
+                    </td>
+                    <td>
+                      <Link to={`/households/${t.buyerId}`}>{t.buyerName}</Link>
+                    </td>
+                    <td className="num">{t.amountKwh.toFixed(2)}</td>
+                    <td className="num">{t.pricePerKwh.toFixed(3)}</td>
+                    <td className="num">{t.totalPrice.toFixed(2)}</td>
+                    <td className="mono muted">{fmtSimTime(t.simTime)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
     </div>
   );
 }

@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
-import { AssetBadge, TxTypeBadge } from "../components/Badge";
-import { fmtSimTime, shortId } from "../format";
+import { AccountId, Fee, TxId } from "../components/ledger";
+import { TxTypeBadge } from "../components/Badge";
+import { PageHead, Section } from "../components/ui";
+import { fmtSimTime } from "../format";
 import type { LedgerTx } from "../types";
 
 const FILTERS = [
+  { value: "TEC", label: "💰 Money (TEC)" },
+  { value: "CERT", label: "🌿 Green certificates" },
+  { value: "RECORD", label: "🧾 Auction records" },
   { value: "ALL", label: "Everything" },
-  { value: "TEC", label: "TEC payments" },
-  { value: "CERT", label: "Green certificates" },
-  { value: "RECORD", label: "Auction records" },
 ];
 
 export function TransactionsPage() {
@@ -18,71 +20,86 @@ export function TransactionsPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>Transactions</h1>
-          <p>Every ledger movement in the microgrid — TEC payments, green certificates and auction records.</p>
-        </div>
-        <select className="input" style={{ width: 220 }} value={asset} onChange={(e) => setAsset(e.target.value)}>
-          {FILTERS.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="card">
+      <PageHead
+        kicker="11 · The ledger"
+        title={
+          <>
+            Every <em>movement</em>, on the record
+          </>
+        }
+        lede="The public ledger of the microgrid. Pick what to show: money, green certificates or auction records. Hover a row for its memo."
+      />
+      <Section
+        num="11.1"
+        title="The feed"
+        note={
+          <>
+            Showing
+            <select className="input" style={{ marginTop: 6 }} value={asset} onChange={(e) => setAsset(e.target.value)}>
+              {FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </>
+        }
+      >
         {loading && !data ? (
-          <div className="empty-state">Loading…</div>
+          <div className="empty-state">Reading the ledger…</div>
         ) : !data || data.length === 0 ? (
-          <div className="empty-state">No transactions yet.</div>
+          <div className="empty-state">Nothing recorded yet.</div>
         ) : (
-          <div className="table-scroll" style={{ maxHeight: 640 }}>
+          <div className="table-scroll" style={{ maxHeight: 720 }}>
             <table>
               <thead>
                 <tr>
-                  <th>Tx ID</th>
-                  <th>Type</th>
-                  <th>Asset</th>
-                  <th>From</th>
-                  <th>To</th>
-                  <th>Amount</th>
-                  <th>Memo</th>
-                  <th>Block</th>
                   <th>When</th>
+                  <th>What</th>
+                  <th>From → to</th>
+                  <th className="num">Amount</th>
+                  <th>Transaction</th>
                 </tr>
               </thead>
               <tbody>
-                {data.map((tx) => (
-                  <tr key={tx.id}>
-                    <td className="mono" title={tx.id}>
-                      {shortId(tx.id, 20)}
-                    </td>
-                    <td>
-                      <TxTypeBadge type={tx.type} asset={tx.asset} />
-                    </td>
-                    <td>
-                      <AssetBadge asset={tx.asset} />
-                    </td>
-                    <td>{tx.fromLabel}</td>
-                    <td>{tx.toLabel}</td>
-                    <td>
-                      {tx.amount.toFixed(tx.asset === "TEC" ? 2 : 3)}
-                      {tx.asset === "TEC" ? "" : " kWh"}
-                    </td>
-                    <td className="muted" style={{ fontSize: 12 }}>
-                      {tx.memo}
-                    </td>
-                    <td>{tx.blockIndex ?? <span className="muted">pending</span>}</td>
-                    <td className="muted">{fmtSimTime(tx.simTime)}</td>
-                  </tr>
-                ))}
+                {data.map((tx) => {
+                  const kwh = tx.asset === "SOLAR" || tx.asset === "WIND";
+                  return (
+                    <tr key={tx.id} title={tx.memo}>
+                      <td className="mono muted">{fmtSimTime(tx.simTime)}</td>
+                      <td>
+                        <TxTypeBadge type={tx.type} asset={tx.asset} />
+                      </td>
+                      <td>
+                        {tx.fromLabel} <span className="muted">→</span> {tx.toLabel}
+                        <span className="cell-sub">
+                          <AccountId id={tx.fromAccountId} /> → <AccountId id={tx.toAccountId} />
+                        </span>
+                      </td>
+                      <td className="num">
+                        {tx.asset === "RECORD" ? (
+                          <span className="muted">record</span>
+                        ) : (
+                          <>
+                            {tx.amount.toFixed(kwh ? 3 : 2)}
+                            <span className="q-unit">{kwh ? `kWh ${tx.asset === "WIND" ? "🌬️" : "☀️"}` : "TEC"}</span>
+                          </>
+                        )}
+                      </td>
+                      <td>
+                        <TxId id={tx.id} compact />
+                        <span className="cell-sub mono">
+                          {tx.blockIndex === null ? "pending" : `block #${tx.blockIndex}`} · fee <Fee hbar={tx.feeHbar} />
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </Section>
     </div>
   );
 }

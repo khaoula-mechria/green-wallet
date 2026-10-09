@@ -4,12 +4,15 @@ import type { Container } from "../../container.js";
 import { asyncRoute } from "../../middleware/errorHandler.js";
 import { parseBody } from "../../middleware/validate.js";
 import { env } from "../../config/env.js";
+import { timingSafeEqual } from "node:crypto";
+import jwt from "jsonwebtoken";
+import { ForbiddenError, UnauthorizedError } from "../../utils/errors.js";
 
 export const HOUSEHOLD_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
 // Only identity/profile fields are client-controlled. Balances in particular
 // are never accepted from the client: the starting TEC grant is server policy.
-const registerSchema = z
+export const registerSchema = z
   .object({
     id: z.string().regex(HOUSEHOLD_ID_PATTERN, "must be 1-64 chars: letters, digits, '-' or '_', starting with a letter or digit").optional(),
     name: z.string().trim().min(1).max(100),
@@ -21,6 +24,11 @@ const registerSchema = z
     batteryCapacityKwh: z.number().finite().min(0).optional(),
   })
   .strict();
+
+const operatorLoginSchema = z.object({ password: z.string().min(1).max(128) }).strict();
+
+/** The operator's identity: starts with "@", which no household id can (HOUSEHOLD_ID_PATTERN). */
+export const OPERATOR_SUBJECT = "@operator";
 
 const loginSchema = z
   .object({
@@ -41,6 +49,22 @@ export function authRoutes(c: Container): Router {
         location: input.location || "Unknown",
       });
       res.status(201).json({ success: true, data: result });
+    })
+  );
+
+  // The operator console (technical views: ledger, blocks, certificates, order book).
+  router.post(
+    "/operator-login",
+    asyncRoute(async (req, res) => {
+      const { password } = parseBody(operatorLoginSchema, req.body);
+      if (!env.operatorPassword) throw new ForbiddenError("the operator console is closed on this deployment");
+      const a = Buffer.from(password);
+      const b = Buffer.from(env.operatorPassword);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) throw new UnauthorizedError("invalid credentials");
+      const token = jwt.sign({ householdId: OPERATOR_SUBJECT, type: "operator", role: "operator" }, env.jwtSecret, {
+        expiresIn: env.jwtExpiresIn,
+      } as jwt.SignOptions);
+      res.json({ success: true, data: { token } });
     })
   );
 

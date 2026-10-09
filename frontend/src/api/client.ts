@@ -1,8 +1,23 @@
 const TOKEN_KEY = "green-wallet-token";
 const HOUSEHOLD_KEY = "green-wallet-household-id";
 
+const OPERATOR_KEY = "green-wallet-operator-token";
+
+/** The household's token; on operator-console pages without one, the operator's. */
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(OPERATOR_KEY);
+}
+
+export function getOperatorToken(): string | null {
+  return localStorage.getItem(OPERATOR_KEY);
+}
+
+export function setOperatorToken(token: string): void {
+  localStorage.setItem(OPERATOR_KEY, token);
+}
+
+export function clearOperatorToken(): void {
+  localStorage.removeItem(OPERATOR_KEY);
 }
 
 export function getStoredHouseholdId(): string | null {

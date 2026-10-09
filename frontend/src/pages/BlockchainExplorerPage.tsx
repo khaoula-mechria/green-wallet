@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
-import { StatCard } from "../components/StatCard";
 import { AssetBadge, TxTypeBadge } from "../components/Badge";
+import { AccountId, Fee, Hash, TxId } from "../components/ledger";
+import { PageHead, Readout, Readouts, Section } from "../components/ui";
 import { fmtSimTime } from "../format";
 import type { BlockDetail, BlockchainBlock, LedgerStatus } from "../types";
 
@@ -21,41 +22,39 @@ export function BlockchainExplorerPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>Blockchain Explorer</h1>
-          <p>
-            Hash-chained record of every TEC payment, green certificate and auction result. Hedera-style IDs, simulated
-            network — every fee is paid by the operator.
-          </p>
-        </div>
-      </div>
+      <PageHead
+        kicker="Ledger"
+        title="Blockchain explorer"
+        lede="Every block seals transactions and carries the hash of the block before it, so changing history would break every link after it. Hedera-style IDs on a simulated network; the operator account pays every fee."
+      />
 
-      <div className="stat-grid">
-        <StatCard label="Ledger" value={status?.mode === "hedera" ? "Hedera testnet" : "Simulated Hedera"} sub={status?.network} />
-        <StatCard label="Operator (fee payer)" value={status?.operatorAccountId ?? "—"} sub={`fees paid: ${(status?.totalFeesHbar ?? 0).toFixed(4)} ℏ`} />
-        <StatCard
-          label="Token IDs"
-          value={status?.tokenIds.TEC ?? "—"}
-          sub={status ? `TEC · SOLAR ${status.tokenIds.SOLAR} · WIND ${status.tokenIds.WIND}` : undefined}
-        />
-        <StatCard label="Blocks" value={String(status?.blocksCount ?? "—")} sub={`${status?.transactionsCount ?? 0} transactions kept`} />
-      </div>
+      <Section title="Network" note={status?.network}>
+        <Readouts>
+          <Readout label="Blocks" value={status?.blocksCount ?? "—"} />
+          <Readout label="Transactions" value={status?.transactionsCount ?? "—"} />
+          <Readout label="Fees paid by operator" value={(status?.totalFeesHbar ?? 0).toFixed(4)} unit="ℏ" sub={status ? <AccountId id={status.operatorAccountId} /> : undefined} />
+          <Readout
+            label="Token IDs"
+            value={status?.tokenIds.TEC ?? "—"}
+            unit="TEC"
+            sub={status ? `SOLAR ${status.tokenIds.SOLAR} · WIND ${status.tokenIds.WIND}` : undefined}
+          />
+        </Readouts>
+      </Section>
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="section-title">Blocks (one per market interval)</div>
-          {loading && !blocks ? (
-            <div className="empty-state">Loading…</div>
-          ) : (
-            <div className="table-scroll">
-              <table>
+      <div className="card-grid card-grid-2">
+        <Section title="Chain" note="Newest first. Each block links to the one below it.">
+          <div className="table-scroll chain-scroll">
+            {loading && !blocks ? (
+              <div className="empty-state">Reading the chain…</div>
+            ) : (
+              <table className="chain-table">
                 <thead>
                   <tr>
-                    <th>#</th>
-                    <th>Hash</th>
-                    <th>Txs</th>
-                    <th>Interval</th>
+                    <th>Block</th>
+                    <th>Hash ← previous</th>
+                    <th className="num">Txs</th>
+                    <th>Sealed</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -63,70 +62,86 @@ export function BlockchainExplorerPage() {
                     <tr
                       key={b.index}
                       onClick={() => setSelectedIndex(b.index)}
-                      style={{ cursor: "pointer" }}
-                      className={selectedIndex === b.index ? "row-highlight" : undefined}
+                      className={"clickable" + (selectedIndex === b.index ? " row-highlight" : "")}
                     >
-                      <td>{b.index}</td>
-                      <td className="mono">{b.hash.slice(0, 16)}…</td>
-                      <td>{b.transactionIds.length}</td>
-                      <td className="muted">{fmtSimTime(b.simTime)}</td>
+                      <td className="mono">#{b.index}</td>
+                      <td>
+                        <Hash value={b.hash} groups={3} /> <span className="muted mono">← {b.previousHash.slice(0, 8)}</span>
+                      </td>
+                      <td className="num">{b.transactionIds.length}</td>
+                      <td className="mono muted">{fmtSimTime(b.simTime)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </Section>
 
-        <div className="card">
-          <div className="section-title">Block detail</div>
+        <Section title="Block record" note={blockDetail ? undefined : "Select a block to read it."} className="sticky-record">
           {!blockDetail ? (
-            <div className="empty-state">Select a block to inspect its transactions.</div>
+            <div className="empty-state">No block selected.</div>
           ) : (
             <div>
-              <DetailRow label="Index" value={String(blockDetail.index)} />
-              <DetailRow label="Hash" value={blockDetail.hash} mono />
-              <DetailRow label="Previous hash" value={blockDetail.previousHash} mono />
-              <DetailRow label="Nonce" value={String(blockDetail.nonce)} />
-              <DetailRow label="Simulated time" value={fmtSimTime(blockDetail.simTime)} />
-              <div style={{ marginTop: 12 }} className="table-scroll">
-                <div className="label" style={{ marginBottom: 8 }}>
-                  Transactions ({blockDetail.transactions.length})
-                </div>
-                {blockDetail.transactions.map((tx) => (
-                  <div key={tx.id} className="card" style={{ marginBottom: 8, boxShadow: "none", padding: "10px 12px" }}>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <TxTypeBadge type={tx.type} asset={tx.asset} />
-                      <AssetBadge asset={tx.asset} />
-                    </div>
-                    <div style={{ fontSize: 12.5, marginTop: 6 }}>
-                      {tx.fromLabel} → {tx.toLabel}: <strong>{tx.amount.toFixed(tx.asset === "TEC" ? 2 : 3)}</strong>
-                      {tx.asset === "TEC" ? " TEC" : " kWh"}
-                    </div>
-                    <div className="muted" style={{ fontSize: 12 }}>
-                      {tx.memo}
-                    </div>
-                    <div className="mono" style={{ fontSize: 11, color: "var(--color-blue)", marginTop: 4 }}>
-                      {tx.id} · fee {tx.feeHbar} ℏ (operator)
-                    </div>
-                  </div>
-                ))}
+              <div className="block-head">
+                <b>#{blockDetail.index}</b>
+                <span className="muted">{fmtSimTime(blockDetail.simTime)}</span>
+                <span className="muted">· {blockDetail.transactions.length} transactions</span>
               </div>
+              <dl className="block-fields">
+                <div>
+                  <dt>Hash</dt>
+                  <dd>
+                    <Hash value={blockDetail.hash} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Previous</dt>
+                  <dd>
+                    <Hash value={blockDetail.previousHash} />
+                  </dd>
+                </div>
+                <div>
+                  <dt>Nonce</dt>
+                  <dd className="mono">{blockDetail.nonce}</dd>
+                </div>
+              </dl>
+              {blockDetail.transactions.length === 0 ? (
+                <div className="empty-state">Genesis block: no transactions.</div>
+              ) : (
+                <table className="dense">
+                  <thead>
+                    <tr>
+                      <th>Transaction</th>
+                      <th className="num">Amount</th>
+                      <th className="num">Fee</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {blockDetail.transactions.map((tx) => (
+                      <tr key={tx.id}>
+                        <td>
+                          <TxTypeBadge type={tx.type} asset={tx.asset} /> <AssetBadge asset={tx.asset} />
+                          <span className="cell-sub">
+                            <AccountId id={tx.fromAccountId} /> {tx.fromLabel} → <AccountId id={tx.toAccountId} /> {tx.toLabel}
+                          </span>
+                          <span className="cell-sub">
+                            <TxId id={tx.id} />
+                          </span>
+                        </td>
+                        <td className="num">{tx.amount.toFixed(tx.asset === "TEC" ? 2 : 3)}</td>
+                        <td className="num">
+                          <Fee hbar={tx.feeHbar} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
-        </div>
+        </Section>
       </div>
-    </div>
-  );
-}
-
-function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--color-border)", fontSize: 13 }}>
-      <span style={{ color: "var(--color-text-muted)" }}>{label}</span>
-      <span className={mono ? "mono" : ""} style={{ maxWidth: "65%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {value}
-      </span>
     </div>
   );
 }

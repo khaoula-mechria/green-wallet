@@ -25,13 +25,16 @@ export function getDatabase(): Database.Database {
   const schemaVersion = (dbInstance.pragma("user_version") as { user_version: number }[])[0]?.user_version ?? 0;
   if (schemaVersion !== CURRENT_SCHEMA_VERSION) {
     console.log(`[db] schema version mismatch (current: ${schemaVersion}, expected: ${CURRENT_SCHEMA_VERSION}) — wiping database`);
-    // Drop all tables and reset user_version
+    // Drop all tables and reset user_version. Foreign keys are off meanwhile,
+    // otherwise dropping a referenced table before its dependents fails.
+    dbInstance.pragma("foreign_keys = OFF");
     const tables = dbInstance
-      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
       .all() as { name: string }[];
     for (const { name } of tables) {
-      dbInstance.prepare(`DROP TABLE IF EXISTS ${name}`).run();
+      dbInstance.prepare(`DROP TABLE IF EXISTS "${name}"`).run();
     }
+    dbInstance.pragma("foreign_keys = ON");
     dbInstance.pragma(`user_version = ${CURRENT_SCHEMA_VERSION}`);
   }
 

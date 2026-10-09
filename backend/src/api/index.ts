@@ -11,6 +11,7 @@ import { transactionsRoutes } from "./routes/transactions.routes.js";
 import { blockchainRoutes } from "./routes/blockchain.routes.js";
 import { gridRoutes } from "./routes/grid.routes.js";
 import { dashboardRoutes, microgridRoutes } from "./routes/dashboard.routes.js";
+import { adminRoutes } from "./routes/admin.routes.js";
 
 export function apiRouter(c: Container): Router {
   const router = Router();
@@ -27,6 +28,7 @@ export function apiRouter(c: Container): Router {
   router.use("/grid", gridRoutes(c));
   router.use("/dashboard", dashboardRoutes(c));
   router.use("/microgrid", microgridRoutes(c));
+  router.use("/admin", adminRoutes(c));
 
   return router;
 }

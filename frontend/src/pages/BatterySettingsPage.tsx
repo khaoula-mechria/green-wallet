@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api, ApiError } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
-import { Gauge } from "../components/Gauge";
 import { SharedBatteryPanel } from "../components/SharedBatteryPanel";
+import { BigBattery, KV, PageHead, Section, SubHead } from "../components/ui";
 import type { HouseholdSettings, MarketStatus, SharedBatteryStatus } from "../types";
 
 export function BatterySettingsPage() {
@@ -63,142 +63,139 @@ export function BatterySettingsPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>Battery &amp; Settings</h1>
-          <p>Your storage and the one-time settings your automatic market agent bids with — like a thermostat.</p>
-        </div>
-      </div>
+      <PageHead
+        kicker="09 · My home"
+        title={
+          <>
+            Battery <em>&amp; agent</em>
+          </>
+        }
+        lede="Your stored energy, and the standing instructions your market agent follows every half hour — set once, like a thermostat."
+      />
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="section-title">My energy storage</div>
-          {isProsumer ? (
-            household.batteryCapacityKwh > 0 ? (
-              <>
-                <Gauge label="Home battery" value={household.batteryChargeKwh} max={household.batteryCapacityKwh} />
-                <p className="hint" style={{ marginTop: -4 }}>
-                  Free to use, no losses. It holds the kWh you can use at night or sell.
-                </p>
-              </>
+      <Section num="9.1" title="My storage" note="The home battery is free and lossless. Rented space pays for itself: it shrinks 1% per simulated hour into the grid pool.">
+        <div className="columns">
+          <div>
+            {isProsumer ? (
+              household.batteryCapacityKwh > 0 ? (
+                <BigBattery warnLow label="🏠 Home battery" value={household.batteryChargeKwh} max={household.batteryCapacityKwh} sub="Free and lossless. Fills first with your surplus." />
+              ) : (
+                <p className="empty-state">No home battery: every surplus goes straight to your overflow choice.</p>
+              )
             ) : (
-              <p className="hint">No home battery — every surplus goes straight to your overflow mode.</p>
-            )
-          ) : (
-            <p className="hint">{isProducer ? "Producers have no battery: output is sold in the auction." : "Consumers have no battery."}</p>
-          )}
-          {!isProducer && (
-            <>
-              <Gauge label="My rented space in the shared battery" value={household.storedKwh} max={grid?.rented.capPerHouseholdKwh ?? 10} color="var(--color-accent)" />
-              <p className="hint" style={{ marginTop: -4 }}>
-                Stored energy pays for itself: it shrinks by {((grid?.decayPerHour ?? 0.01) * 100).toFixed(0)}% per simulated hour, and
-                the loss goes to the grid pool. Marketplace purchases are delivered here too.
-              </p>
-            </>
-          )}
-          <div className="kv-list" style={{ marginTop: 10 }}>
-            <div>
-              <span>Reserved in my offers</span>
-              <strong>{household.reservedInOffersKwh.toFixed(2)} kWh</strong>
-            </div>
-            <div>
-              <span>Can still list on the marketplace</span>
-              <strong>{household.listableKwh.toFixed(2)} kWh</strong>
-            </div>
-            <div>
-              <span>Can still receive</span>
-              <strong>{household.storageSpaceKwh.toFixed(2)} kWh</strong>
-            </div>
+              <p className="empty-state">{isProducer ? "Producers have no battery: output is sold in the auction." : "Consumers have no battery."}</p>
+            )}
+            {!isProducer && (
+              <BigBattery
+                label="🔋 My rented battery (community battery)"
+                value={household.storedKwh}
+                max={grid?.rented.capPerHouseholdKwh ?? 10}
+                sub="Space you rent in the shared neighbourhood battery. Stored energy shrinks 1% per simulated hour: that is the rental fee."
+              />
+            )}
           </div>
+          <KV
+            rows={[
+              ["Reserved in my offers (level)", `${household.reservedInOffersKwh.toFixed(2)} kWh`],
+              ["Can still list for sale (level)", `${household.listableKwh.toFixed(2)} kWh`],
+              ["Free space I can still fill (level)", `${household.storageSpaceKwh.toFixed(2)} kWh`],
+            ]}
+          />
         </div>
+      </Section>
 
-        <div className="card">
-          <div className="section-title">Market agent settings</div>
+      <Section
+        num="9.2"
+        title="Agent instructions"
+        note={band ? `Every price stays inside the utility's band, ${band.floor.toFixed(2)}–${band.ceiling.toFixed(2)} TEC/kWh. Defaults always beat the utility.` : undefined}
+      >
+        <form onSubmit={save} style={{ maxWidth: 640 }}>
           {error && <div className="alert alert-error">{error}</div>}
           {success && <div className="alert alert-success">{success}</div>}
-          <form onSubmit={save}>
-            {isProsumer && (
-              <div className="field">
-                <label className="label">When my battery is full (overflow mode)</label>
-                <select className="input" value={form.overflowMode} onChange={(e) => set("overflowMode", e.target.value as HouseholdSettings["overflowMode"])}>
-                  <option value="sell">Sell — offer the overflow in the auction now</option>
-                  <option value="store">Store — keep it in my rented space and sell later</option>
-                </select>
-              </div>
-            )}
 
-            {!isConsumer && (
+          {isProsumer && (
+            <div className="field">
+              <label className="label">When my battery is full</label>
+              <select className="input" value={form.overflowMode} onChange={(e) => set("overflowMode", e.target.value as HouseholdSettings["overflowMode"])}>
+                <option value="sell">Sell — offer the overflow in the auction now</option>
+                <option value="store">Store — keep it in my rented space and sell later</option>
+              </select>
+            </div>
+          )}
+
+          {!isConsumer && (
+            <div className="form-row">
+              <div className="field">
+                <label className="label">Never sell surplus below</label>
+                {priceInput(form.minSellPrice, (v) => set("minSellPrice", v))}
+              </div>
+              {isProsumer && form.overflowMode === "store" && (
+                <div className="field">
+                  <label className="label">Sell stored energy from</label>
+                  {priceInput(form.storeMinPrice, (v) => set("storeMinPrice", v))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isProducer && (
+            <div className="field">
+              <label className="label">Never pay more than</label>
+              {priceInput(form.maxBuyPrice, (v) => set("maxBuyPrice", v))}
+            </div>
+          )}
+
+          {isProsumer && household.batteryCapacityKwh > 0 && (
+            <>
+              <label className="check">
+                <input type="checkbox" checked={form.batterySell.enabled} onChange={(e) => setBatterySell({ enabled: e.target.checked })} />
+                Sell from my battery when the price is high
+              </label>
               <div className="form-row">
                 <div className="field">
-                  <label className="label">Never sell surplus below (TEC/kWh)</label>
-                  {priceInput(form.minSellPrice, (v) => set("minSellPrice", v))}
+                  <label className="label">…when the price reaches</label>
+                  {priceInput(form.batterySell.minPrice, (v) => setBatterySell({ minPrice: v }))}
                 </div>
-                {isProsumer && form.overflowMode === "store" && (
-                  <div className="field">
-                    <label className="label">Sell stored energy from (TEC/kWh)</label>
-                    {priceInput(form.storeMinPrice, (v) => set("storeMinPrice", v))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {!isProducer && (
-              <div className="field">
-                <label className="label">Never pay more than (TEC/kWh)</label>
-                {priceInput(form.maxBuyPrice, (v) => set("maxBuyPrice", v))}
-              </div>
-            )}
-
-            {isProsumer && household.batteryCapacityKwh > 0 && (
-              <>
-                <label className="toggle-row">
-                  <input type="checkbox" checked={form.batterySell.enabled} onChange={(e) => setBatterySell({ enabled: e.target.checked })} />
-                  Sell from my battery when the price is high
-                </label>
-                <div className="form-row">
-                  <div className="field">
-                    <label className="label">…when the price is at least (TEC/kWh)</label>
-                    {priceInput(form.batterySell.minPrice, (v) => setBatterySell({ minPrice: v }))}
-                  </div>
-                  <div className="field">
-                    <label className="label">…but always keep (% of battery)</label>
-                    <input
-                      className="input"
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={5}
-                      value={form.batterySell.keepPercent}
-                      onChange={(e) => setBatterySell({ keepPercent: Number(e.target.value) })}
-                    />
-                  </div>
+                <div className="field">
+                  <label className="label">…always keeping, % of battery</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={form.batterySell.keepPercent}
+                    onChange={(e) => setBatterySell({ keepPercent: Number(e.target.value) })}
+                  />
                 </div>
-              </>
-            )}
+              </div>
+            </>
+          )}
 
-            <label className="toggle-row">
-              <input type="checkbox" checked={form.auctionOptOut} onChange={(e) => set("auctionOptOut", e.target.checked)} />
-              Opt out of the auction (export surplus at the floor, import deficits at the ceiling)
-            </label>
+          <label className="check">
+            <input type="checkbox" checked={form.auctionOptOut} onChange={(e) => set("auctionOptOut", e.target.checked)} />
+            Stay out of the auction — export surplus at the floor, import at the ceiling
+          </label>
 
-            <button className="btn btn-primary" disabled={saving}>
-              {saving ? "Saving…" : "Save settings"}
-            </button>
-            {band && (
-              <p className="hint">
-                All prices must stay inside the band {band.floor.toFixed(2)}–{band.ceiling.toFixed(2)} TEC/kWh. Defaults: sell from the
-                floor, buy up to the ceiling ("always beat the utility").
-              </p>
-            )}
-          </form>
-        </div>
-      </div>
+          <button className="btn btn-primary" disabled={saving}>
+            {saving ? "Saving…" : "Save settings"}
+          </button>
+        </form>
+      </Section>
 
       {grid && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="section-title">The shared battery</div>
-          <SharedBatteryPanel status={grid} />
-        </div>
+        <Section num="9.3" title="The shared battery" note="One community battery: rented slices for households, the rest for the operator's grid pool.">
+          <div className="columns">
+            <SharedBatteryPanel status={grid} />
+            <div>
+              <SubHead>How storing pays off</SubHead>
+              <p className="hint" style={{ marginTop: 0 }}>
+                Storing overnight costs about 11% of the energy. It is worth it when the evening price beats the noon price by more than that — which the
+                auction usually provides.
+              </p>
+            </div>
+          </div>
+        </Section>
       )}
     </div>
   );

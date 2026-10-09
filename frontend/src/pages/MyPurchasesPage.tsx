@@ -1,7 +1,8 @@
 import { api } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
-import { fmtSimTime, shortId } from "../format";
+import { PageHead, Section } from "../components/ui";
+import { fmtSimTime } from "../format";
 import type { EnergyTrade } from "../types";
 
 export function MyPurchasesPage() {
@@ -13,73 +14,66 @@ export function MyPurchasesPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>My Trades</h1>
-          <p>Marketplace contracts you took part in. Auction trades appear in your Wallet history.</p>
-        </div>
-      </div>
-
-      <TradeTable title="Purchases" trades={purchases} loading={loading && !data} counterpartyLabel="Seller" counterpartyOf={(t) => t.sellerName} />
-      <div style={{ marginTop: 16 }}>
-        <TradeTable title="Sales" trades={sales} loading={loading && !data} counterpartyLabel="Buyer" counterpartyOf={(t) => t.buyerName} />
-      </div>
+      <PageHead
+        kicker="07 · The market"
+        title={
+          <>
+            My <em>trades</em>
+          </>
+        }
+        lede="Marketplace contracts you took part in, with the green certificates that travelled with the energy. Auction trades are in your wallet's ledger."
+      />
+      <Section num="7.1" title="Bought">
+        <TradeTable trades={purchases} loading={loading && !data} counterpartyLabel="Seller" counterpartyOf={(t) => t.sellerName} />
+      </Section>
+      <Section num="7.2" title="Sold">
+        <TradeTable trades={sales} loading={loading && !data} counterpartyLabel="Buyer" counterpartyOf={(t) => t.buyerName} />
+      </Section>
     </div>
   );
 }
 
 function TradeTable({
-  title,
   trades,
   loading,
   counterpartyLabel,
   counterpartyOf,
 }: {
-  title: string;
   trades: EnergyTrade[];
   loading: boolean;
   counterpartyLabel: string;
   counterpartyOf: (t: EnergyTrade) => string;
 }) {
+  if (loading) return <div className="empty-state">Reading trades…</div>;
+  if (trades.length === 0) return <div className="empty-state">None yet.</div>;
   return (
-    <div className="card">
-      <div className="section-title">{title}</div>
-      {loading ? (
-        <div className="empty-state">Loading…</div>
-      ) : trades.length === 0 ? (
-        <div className="empty-state">Nothing here yet.</div>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>{counterpartyLabel}</th>
-              <th>kWh</th>
-              <th>Price</th>
-              <th>Total (TEC)</th>
-              <th>Certificates</th>
-              <th>Ledger tx</th>
-              <th>When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trades.map((t) => (
-              <tr key={t.id}>
-                <td>{counterpartyOf(t)}</td>
-                <td>{t.amountKwh.toFixed(2)}</td>
-                <td>{t.pricePerKwh.toFixed(3)}</td>
-                <td>{t.totalPrice.toFixed(2)}</td>
-                <td className="muted">
-                  {t.certificates.solar > 0 && `☀ ${t.certificates.solar.toFixed(2)} `}
-                  {t.certificates.wind > 0 && `🌬 ${t.certificates.wind.toFixed(2)}`}
-                  {t.certificates.solar + t.certificates.wind === 0 && "grey"}
-                </td>
-                <td className="mono">{t.ledgerTxId ? shortId(t.ledgerTxId, 22) : "—"}</td>
-                <td className="muted">{fmtSimTime(t.simTime)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>{counterpartyLabel}</th>
+          <th className="num">kWh</th>
+          <th className="num">Price · TEC/kWh</th>
+          <th className="num">Total · TEC</th>
+          <th>Energy type</th>
+          <th>When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {trades.map((t) => (
+          <tr key={t.id}>
+            <td className="cell-name">{counterpartyOf(t)}</td>
+            <td className="num">{t.amountKwh.toFixed(2)}</td>
+            <td className="num">{t.pricePerKwh.toFixed(3)}</td>
+            <td className="num">{t.totalPrice.toFixed(2)}</td>
+            <td>
+              {t.certificates.solar > 0 && <span className="tag tag-solar">{t.certificates.solar.toFixed(2)} solar ☀️</span>}{" "}
+              {t.certificates.wind > 0 && <span className="tag tag-wind">{t.certificates.wind.toFixed(2)} wind 🌬️</span>}
+              {t.certificates.solar + t.certificates.wind === 0 && <span className="muted">grey (utility)</span>}
+            </td>
+            <td className="mono muted">{fmtSimTime(t.simTime)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

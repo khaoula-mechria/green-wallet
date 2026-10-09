@@ -42,6 +42,9 @@ export const env = {
   simulationEnabled: bool(process.env.SIMULATION_ENABLED, !isProduction),
   simulationTickMs: num(process.env.SIMULATION_TICK_MS, 5000),
   simulationMinutesPerTick: num(process.env.SIMULATION_MINUTES_PER_TICK, 30),
+  // Demo-only neighbours on top of the simulation: occasional marketplace listings and
+  // purchases, and a simulated monthly top-up for wallets that ran dry.
+  demoMarketEnabled: bool(process.env.DEMO_MARKET_ACTIVITY, !isProduction),
 
   // Phase 3: the market clock (docs/DESIGN.md §0.6). One auction per interval; it
   // runs even when the simulation is off. Defaults follow the simulation tick.
@@ -100,6 +103,10 @@ export const env = {
   hederaTokenId: process.env.HEDERA_TOKEN_ID ?? "",
 
   keyEncryptionSecret: process.env.KEY_ENCRYPTION_SECRET || DEV_KEY_ENCRYPTION_SECRET,
+
+  // Operator console login. Development default "operator123"; in production the
+  // console stays closed unless a real password is set.
+  operatorPassword: process.env.OPERATOR_PASSWORD || (isProduction ? "" : "operator123"),
 };
 
 export type Env = typeof env;
@@ -206,6 +213,7 @@ export function validateEnv(e: Env = env): string[] {
   }
   if (e.jwtSecret === e.keyEncryptionSecret) problems.push("JWT_SECRET and KEY_ENCRYPTION_SECRET must differ");
   if (e.corsOrigin === "*") problems.push("CORS_ORIGIN must not be '*' in production (leave unset for same-origin)");
+  if (e.operatorPassword && e.operatorPassword.length < 12) problems.push("OPERATOR_PASSWORD must be at least 12 characters (or unset to close the console)");
 
   return problems;
 }
@@ -220,6 +228,7 @@ export function assertValidEnv(e: Env = env): void {
   if (e.isProduction) {
     if (e.seedDemoData) console.warn("[config] WARNING: SEED_DEMO_DATA is on in production — demo accounts use a public password");
     if (e.simulationEnabled) console.warn("[config] WARNING: SIMULATION_ENABLED is on in production — readings are simulated");
+    if (e.demoMarketEnabled) console.warn("[config] WARNING: DEMO_MARKET_ACTIVITY is on in production — simulated listings, purchases and top-ups");
     if (e.manualMeasurementsEnabled) console.warn("[config] WARNING: MANUAL_MEASUREMENTS_ENABLED is on in production — readings are self-reported");
     if (e.topupsEnabled) console.warn("[config] WARNING: TOPUPS_ENABLED is on in production — real payment integration required");
     if (e.treasuryInitialTec < e.treasuryLowWarningTec) console.warn("[config] WARNING: TREASURY_INITIAL_TEC is below TREASURY_LOW_WARNING_TEC threshold");

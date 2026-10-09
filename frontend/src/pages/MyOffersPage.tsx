@@ -3,6 +3,7 @@ import { api, ApiError } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
 import { StatusBadge } from "../components/Badge";
+import { PageHead, Section } from "../components/ui";
 import { fmtSimTime } from "../format";
 import type { EnergyOffer } from "../types";
 
@@ -26,59 +27,74 @@ export function MyOffersPage() {
     }
   }
 
+  const active = (data ?? []).filter((o) => o.status === "active");
+  const past = (data ?? []).filter((o) => o.status !== "active");
+
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>My Offers</h1>
-          <p>
-            Listed kWh stay reserved in your battery / storage. An offer shrinks if your own deficit uses that energy or if
-            stored energy decays.
-          </p>
-        </div>
-      </div>
+      <PageHead
+        kicker="06 · The market"
+        title={
+          <>
+            My <em>offers</em>
+          </>
+        }
+        lede="What you have listed. Listed kWh stay reserved in your battery or storage; an offer shrinks if your own deficit uses that energy, or if stored energy decays."
+      />
+      {error && <div className="alert alert-error" style={{ marginTop: 20 }}>{error}</div>}
 
-      <div className="card">
-        {error && <div className="alert alert-error">{error}</div>}
+      <Section num="6.1" title="Open" note="Expires after 24 simulated hours.">
         {loading && !data ? (
-          <div className="empty-state">Loading…</div>
-        ) : !data || data.length === 0 ? (
-          <div className="empty-state">You have no offers. List energy you own from the Marketplace page.</div>
+          <div className="empty-state">Reading your offers…</div>
+        ) : active.length === 0 ? (
+          <div className="empty-state">Nothing listed. List energy you own from the Marketplace.</div>
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Offered</th>
-                <th>Remaining</th>
-                <th>Price (TEC/kWh)</th>
-                <th>Expires</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((o) => (
-                <tr key={o.id}>
-                  <td>{o.amountKwh.toFixed(2)} kWh</td>
-                  <td>{o.amountRemainingKwh.toFixed(2)} kWh</td>
-                  <td>{o.pricePerKwh.toFixed(3)}</td>
-                  <td className="muted">{fmtSimTime(o.expiresAtSimTime)}</td>
-                  <td>
-                    <StatusBadge status={o.status} />
-                  </td>
-                  <td>
-                    {o.status === "active" && (
-                      <button className="btn btn-danger" disabled={cancellingId === o.id} onClick={() => cancel(o.id)}>
-                        {cancellingId === o.id ? "Cancelling…" : "Cancel"}
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <OfferTable offers={active} cancellingId={cancellingId} onCancel={cancel} />
         )}
-      </div>
+      </Section>
+
+      {past.length > 0 && (
+        <Section num="6.2" title="Closed" note="Sold, cancelled, emptied or expired.">
+          <OfferTable offers={past} cancellingId={cancellingId} onCancel={cancel} />
+        </Section>
+      )}
     </div>
+  );
+}
+
+function OfferTable({ offers, cancellingId, onCancel }: { offers: EnergyOffer[]; cancellingId: string | null; onCancel: (id: string) => void }) {
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th className="num">Offered kWh</th>
+          <th className="num">Remaining kWh</th>
+          <th className="num">Price</th>
+          <th>Expires</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {offers.map((o) => (
+          <tr key={o.id}>
+            <td className="num">{o.amountKwh.toFixed(2)}</td>
+            <td className="num">{o.amountRemainingKwh.toFixed(2)}</td>
+            <td className="num">{o.pricePerKwh.toFixed(3)}</td>
+            <td className="mono muted">{fmtSimTime(o.expiresAtSimTime)}</td>
+            <td>
+              <StatusBadge status={o.status} />
+            </td>
+            <td className="num">
+              {o.status === "active" && (
+                <button className="btn btn-danger btn-small" disabled={cancellingId === o.id} onClick={() => onCancel(o.id)}>
+                  {cancellingId === o.id ? "Cancelling…" : "Cancel"}
+                </button>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }

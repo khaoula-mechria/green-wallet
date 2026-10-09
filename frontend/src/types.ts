@@ -316,6 +316,8 @@ export interface MyBidPreview {
 }
 
 export interface RegisterInput {
+  /** Optional chosen login id (letters, digits, "-" or "_"); generated when absent. */
+  id?: string;
   name: string;
   type: HouseholdType;
   location: string;

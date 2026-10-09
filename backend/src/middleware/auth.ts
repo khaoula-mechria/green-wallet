@@ -36,6 +36,14 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
   next();
 }
 
+/** Operator-console only: a valid token issued by /auth/operator-login. */
+export function requireOperator(req: Request, res: Response, next: NextFunction): void {
+  requireAuth(req, res, () => {
+    if (req.auth?.role !== "operator") throw new ForbiddenError("operator console only");
+    next();
+  });
+}
+
 /** Owner-only access: the authenticated household may only read its own
  * private data (wallet, trade history, meter readings). */
 export function assertSelf(req: Request, householdId: string): void {

@@ -380,6 +380,51 @@ export class Engine {
     this.intervalStartedAt = Date.now();
     this.expireOffers();
     this.generateReadings();
+    this.demoMarket();
+  }
+
+  /**
+   * Demo-only neighbours (mirrors backend SimulationService.demoMarket): every two
+   * simulated hours a prosumer with stored energy lists some of it, every ninety
+   * minutes a neighbour buys from an open offer, and once a simulated day wallets
+   * that ran dry get a simulated top-up, as a real household would do. They use
+   * the same createOffer / purchase / top-up paths a person would.
+   */
+  private demoMarket(listOnly = false): void {
+    const homes = [...this.households.values()].filter((h) => h.type !== "producer");
+    if (!listOnly && this.simMinutes % 1440 === 0) {
+      for (const h of homes) {
+        if (h.tec - h.reservedTec < 5) this.transferTec("TOPUP", null, h.accountId, 20, "Monthly top-up (simulated)");
+      }
+    }
+    if (listOnly || this.interval % 4 === 0) {
+      for (const h of homes) {
+        if (h.type !== "prosumer" || this.offers.some((o) => o.sellerId === h.id && o.status === "active")) continue;
+        const kwh = Math.floor(Math.min(3, this.listable(h) * 0.5) * 10) / 10;
+        if (kwh < C.MIN_OFFER_KWH) continue;
+        const price = Math.min(C.CEILING, Math.max(C.FLOOR, Math.round(this.avg24h() * (1.05 + Math.random() * 0.15) * 1000) / 1000));
+        try {
+          this.createOffer(h.id, kwh, price);
+        } catch {
+          // not enough listable energy after all: skip this one
+        }
+      }
+    }
+    if (!listOnly && this.interval % 3 === 1) {
+      const open = this.offers.filter((o) => o.status === "active");
+      const buyers = homes.filter((h) => h.tec - h.reservedTec > 1).sort(() => Math.random() - 0.5);
+      for (const o of open.slice(0, 2)) {
+        const buyer = buyers.find((b) => b.id !== o.sellerId);
+        if (!buyer) break;
+        const kwh = Math.floor(Math.min(o.amountRemainingKwh, this.storageSpace(buyer), 1.5, (buyer.tec - buyer.reservedTec) / o.pricePerKwh) * 10) / 10;
+        if (kwh < 0.1) continue;
+        try {
+          this.purchase(buyer.id, o.id, kwh);
+        } catch {
+          // the buyer can't take it right now: try again later
+        }
+      }
+    }
   }
 
   private seed(): void {
@@ -392,6 +437,7 @@ export class Engine {
 
     for (const def of SEED) this.createHousehold(def);
     this.generateReadings();
+    this.demoMarket(true); // a few open offers from the start
     this.mineBlock();
   }
 
@@ -1074,6 +1120,14 @@ export class Engine {
 
   // ---- public API (called by mock handlers) -------------------------------
 
+  /** Operator console: credit TEC to a household from the treasury (a transfer, not new money). */
+  operatorCredit(id: string, amount: number) {
+    const h = this.get(id);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1000) throw invalid("amount must be between 0.01 and 1000 TEC");
+    this.transferTec("OPERATOR_FUNDING", C.ACCOUNTS.treasury, h.accountId, amount, "Credit from the operator");
+    return this.toPublic(h);
+  }
+
   login(id: string, password: string) {
     const h = this.households.get(id);
     if (!h || h.password !== password) throw unauthorized();
@@ -1089,7 +1143,13 @@ export class Engine {
         throw invalid(`battery capacity must be between 0 and ${C.MAX_BATTERY_KWH} kWh`);
       }
     }
+    // Same rule as the backend (auth.routes.ts HOUSEHOLD_ID_PATTERN): an optional, chosen login id.
+    const id = input.id?.trim() || undefined;
+    if (id !== undefined && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id)) {
+      throw invalid("id must be 1-64 chars: letters, digits, '-' or '_', starting with a letter or digit");
+    }
     const h = this.createHousehold({
+      id,
       name: input.name.trim(),
       type: input.type,
       location: input.location?.trim() || "Unknown",

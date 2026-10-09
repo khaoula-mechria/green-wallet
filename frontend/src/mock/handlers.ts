@@ -18,6 +18,8 @@ interface Route {
   method: "GET" | "POST";
   pattern: RegExp;
   auth: boolean;
+  /** Operator-console only. */
+  operator?: boolean;
   handler: Handler;
 }
 
@@ -35,6 +37,24 @@ function ownOnly(ctx: Ctx, id: string): string {
 
 const routes: Route[] = [
   // auth
+  {
+    method: "POST",
+    pattern: /^\/auth\/operator-login$/,
+    auth: false,
+    handler: ({ body }) => {
+      if (String(body?.password ?? "") !== "operator123") throw new ApiError("invalid credentials", 401, "UNAUTHORIZED");
+      return { token: "mock-operator-token" };
+    },
+  },
+  // operator console actions
+  { method: "POST", pattern: /^\/admin\/households$/, auth: false, operator: true, handler: ({ body }) => e().register(body as RegisterInput).household },
+  {
+    method: "POST",
+    pattern: /^\/admin\/households\/([^/]+)\/credit$/,
+    auth: false,
+    operator: true,
+    handler: ({ params, body }) => e().operatorCredit(params[0], Number(body?.amount)),
+  },
   { method: "POST", pattern: /^\/auth\/login$/, auth: false, handler: ({ body }) => e().login(String(body?.id ?? ""), String(body?.password ?? "")) },
   { method: "POST", pattern: /^\/auth\/register$/, auth: false, handler: ({ body }) => e().register(body as RegisterInput) },
 
@@ -114,6 +134,9 @@ export async function handleMockRequest<T>(method: string, path: string, body: u
     const match = route.pattern.exec(pathname);
     if (!match) continue;
 
+    if (route.operator && token !== "mock-operator-token") {
+      throw new ApiError(token ? "operator console only" : "authentication required", token ? 403 : 401, token ? "FORBIDDEN" : "UNAUTHORIZED");
+    }
     if (route.auth && (!userId || !e().hasHousehold(userId))) {
       throw new ApiError("authentication required", 401, "UNAUTHORIZED");
     }

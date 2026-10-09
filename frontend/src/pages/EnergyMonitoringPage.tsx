@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { api, ApiError } from "../api/client";
 import { usePolling } from "../hooks/usePolling";
 import { useAuth } from "../context/AuthContext";
 import { fmtClock, fmtPrice, fmtSimTime } from "../format";
 import type { EnergyMeasurement, MeasurementResult } from "../types";
+import { AXIS_TICK, CHART_MARGIN, COLORS, ChartFrame, ChartTooltip, KV, Key, Legend, PageHead, Section, niceTicks } from "../components/ui";
 
 export function EnergyMonitoringPage() {
   const { household, refresh } = useAuth();
@@ -26,6 +27,7 @@ export function EnergyMonitoringPage() {
     .slice()
     .reverse()
     .map((m) => ({ time: fmtClock(m.simTime), production: m.production, consumption: m.consumption }));
+  const yTicks = niceTicks(Math.max(0.5, ...chartData.map((d) => Math.max(isConsumer ? 0 : d.production, d.consumption))));
 
   async function submitMeasurement(e: React.FormEvent) {
     e.preventDefault();
@@ -64,67 +66,101 @@ export function EnergyMonitoringPage() {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1>Energy</h1>
-          <p>
-            Meter readings for <strong>{household?.name}</strong> and where every kWh went. Own sources are used
-            immediately; the rest settles in the auction at the end of the interval.
-          </p>
-        </div>
-      </div>
+      <PageHead
+        kicker="08 · My home"
+        title={
+          <>
+            The <em>meter</em>
+          </>
+        }
+        lede={
+          <>
+            Readings for <b>{household?.name}</b>, and where every kWh went. Your own battery and stored energy are used at once; whatever is left waits for
+            the auction at the end of the half hour.
+          </>
+        }
+      />
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="section-title">Production &amp; consumption (kWh per 30 min)</div>
-          {loading && !data ? (
-            <div className="empty-state">Loading…</div>
-          ) : chartData.length === 0 ? (
-            <div className="empty-state">No readings yet.</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8e4" />
-                <XAxis dataKey="time" tick={{ fontSize: 11 }} minTickGap={20} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Legend />
-                {!isConsumer && <Line type="monotone" dataKey="production" stroke="#16a34a" strokeWidth={2} dot={false} isAnimationActive={false} />}
-                <Line type="monotone" dataKey="consumption" stroke="#2563eb" strokeWidth={2} dot={false} isAnimationActive={false} />
-              </LineChart>
+      <Section num="8.1" title="Production and use" note="kWh per half hour, the latest 24 hours.">
+        {loading && !data ? (
+          <div className="empty-state">Reading the meter…</div>
+        ) : chartData.length === 0 ? (
+          <div className="empty-state">No readings yet.</div>
+        ) : (
+          <figure className="figure">
+            <Legend>
+              {!isConsumer && (
+                <Key kind="line" color={COLORS.supply}>
+                  Production
+                </Key>
+              )}
+              <Key kind="line" color={COLORS.demand}>
+                Consumption
+              </Key>
+            </Legend>
+            <ChartFrame y="kWh per half hour" x="time of day (simulated)">
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={chartData} margin={CHART_MARGIN}>
+                <CartesianGrid stroke={COLORS.ruleSoft} />
+                <XAxis dataKey="time" tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: COLORS.rule }} minTickGap={32} />
+                <YAxis width={40} tick={AXIS_TICK} tickLine={false} axisLine={false} ticks={yTicks} domain={[0, yTicks[yTicks.length - 1]]} />
+                <Tooltip
+                  cursor={{ stroke: COLORS.ink, strokeWidth: 1 }}
+                  content={({ active, payload, label }) => (
+                    <ChartTooltip
+                      active={active}
+                      title={label}
+                      rows={(payload ?? []).map((p) => ({
+                        label: p.dataKey === "production" ? "Produced" : "Used",
+                        value: `${Number(p.value).toFixed(2)} kWh`,
+                        color: p.dataKey === "production" ? COLORS.supply : COLORS.demand,
+                      }))}
+                    />
+                  )}
+                />
+                {!isConsumer && (
+                  <Area type="monotone" dataKey="production" stroke={COLORS.supply} strokeWidth={2} fill={COLORS.supply} fillOpacity={0.1} isAnimationActive={false} />
+                )}
+                <Area type="monotone" dataKey="consumption" stroke={COLORS.demand} strokeWidth={2} fill={COLORS.demand} fillOpacity={0.1} isAnimationActive={false} />
+              </AreaChart>
             </ResponsiveContainer>
-          )}
-        </div>
+            </ChartFrame>
+          </figure>
+        )}
+      </Section>
 
-        <div className="card">
-          <div className="section-title">Submit a meter reading</div>
-          {error && <div className="alert alert-error">{error}</div>}
-          {success && <div className="alert alert-success">{success}</div>}
+      <Section num="8.2" title="Submit a reading" note="Manual readings are capped and rate-limited, because production earns certificates.">
+        <div className="columns">
           <form onSubmit={submitMeasurement}>
-            {!isConsumer && (
+            {error && <div className="alert alert-error">{error}</div>}
+            {success && <div className="alert alert-success">{success}</div>}
+            <div className="form-row">
+              {!isConsumer && (
+                <div className="field">
+                  <label className="label">Produced, kWh</label>
+                  <input className="input" type="number" min="0" step="0.1" value={production} onChange={(e) => setProduction(e.target.value)} required />
+                </div>
+              )}
               <div className="field">
-                <label className="label">Production (kWh)</label>
-                <input className="input" type="number" min="0" step="0.1" value={production} onChange={(e) => setProduction(e.target.value)} required />
+                <label className="label">Used, kWh</label>
+                <input className="input" type="number" min="0" step="0.1" value={consumption} onChange={(e) => setConsumption(e.target.value)} required />
               </div>
-            )}
-            <div className="field">
-              <label className="label">Consumption (kWh)</label>
-              <input className="input" type="number" min="0" step="0.1" value={consumption} onChange={(e) => setConsumption(e.target.value)} required />
             </div>
-            <button className="btn btn-primary" disabled={submitting} style={{ width: "100%" }}>
+            <button className="btn btn-primary" disabled={submitting}>
               {submitting ? "Submitting…" : "Submit reading"}
             </button>
           </form>
-          <ol className="steps" style={{ marginTop: 14 }}>
-            <li>Production earns green certificates, not TEC.</li>
-            <li>Surplus: own battery → rented storage (store mode) → auction → export at the floor.</li>
-            <li>Deficit: own battery → own stored energy → auction → import at the ceiling.</li>
-          </ol>
+          <KV
+            rows={[
+              ["Production", "earns certificates, never TEC"],
+              ["Surplus", "battery → storage → auction → export"],
+              ["Deficit", "battery → storage → auction → import"],
+            ]}
+          />
         </div>
-      </div>
+      </Section>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="section-title">Where the energy went</div>
+      <Section num="8.3" title="Where each kWh went" note="All energy figures are rates in kWh/30 min (one row = one half hour). Own sources settle at once; the auction columns fill in when the half hour closes.">
         {!data || data.length === 0 ? (
           <div className="empty-state">No readings yet.</div>
         ) : (
@@ -133,14 +169,14 @@ export function EnergyMonitoringPage() {
               <thead>
                 <tr>
                   <th>Time</th>
-                  <th>Prod.</th>
-                  <th>Cons.</th>
-                  <th>Self-use</th>
-                  <th>Battery ±</th>
-                  <th>Storage ±</th>
-                  <th>Auction sold / bought</th>
-                  <th>Export / import</th>
-                  <th>Price</th>
+                  <th className="num">Made</th>
+                  <th className="num">Used</th>
+                  <th className="num">Self-use</th>
+                  <th className="num">Battery ±</th>
+                  <th className="num">Storage ±</th>
+                  <th>Auction</th>
+                  <th>Utility</th>
+                  <th className="num">Price · TEC/kWh</th>
                 </tr>
               </thead>
               <tbody>
@@ -150,36 +186,40 @@ export function EnergyMonitoringPage() {
                   const storage = f.toStorage - f.fromStorage;
                   return (
                     <tr key={m.id}>
-                      <td>
+                      <td className="mono">
                         {fmtSimTime(m.simTime)}
-                        {m.source === "manual" && <span className="badge badge-pending" style={{ marginLeft: 6 }}>manual</span>}
+                        {m.source === "manual" && (
+                          <span className="tag tag-pending" style={{ marginLeft: 8 }}>
+                            manual
+                          </span>
+                        )}
                       </td>
-                      <td>{m.production.toFixed(2)}</td>
-                      <td>{m.consumption.toFixed(2)}</td>
-                      <td>{f.selfUse.toFixed(2)}</td>
-                      <td className={battery > 0 ? "pos" : battery < 0 ? "neg" : "muted"}>{signed(battery)}</td>
-                      <td className={storage > 0 ? "pos" : storage < 0 ? "neg" : "muted"}>{signed(storage)}</td>
+                      <td className="num">{m.production.toFixed(2)}</td>
+                      <td className="num">{m.consumption.toFixed(2)}</td>
+                      <td className="num">{f.selfUse.toFixed(2)}</td>
+                      <td className={"num " + (battery > 0 ? "supply" : battery < 0 ? "demand" : "muted")}>{signed(battery)}</td>
+                      <td className={"num " + (storage > 0 ? "supply" : storage < 0 ? "demand" : "muted")}>{signed(storage)}</td>
                       <td>
                         {!f.settled ? (
                           <span className="muted">{f.toAuction > 0 ? `selling ${f.toAuction.toFixed(2)}…` : f.toBuy > 0 ? `buying ${f.toBuy.toFixed(2)}…` : "—"}</span>
                         ) : f.sold > 0 ? (
-                          <span className="pos">sold {f.sold.toFixed(2)}</span>
+                          <span className="supply">sold {f.sold.toFixed(2)}</span>
                         ) : f.bought > 0 ? (
-                          <span className="neg">bought {f.bought.toFixed(2)}</span>
+                          <span className="demand">bought {f.bought.toFixed(2)}</span>
                         ) : (
                           <span className="muted">—</span>
                         )}
                       </td>
                       <td>
                         {f.exported > 0 ? (
-                          <span className="pos">export {f.exported.toFixed(2)}</span>
+                          <span className="supply">export {f.exported.toFixed(2)}</span>
                         ) : f.imported > 0 ? (
-                          <span className="neg">import {f.imported.toFixed(2)}</span>
+                          <span className="demand">import {f.imported.toFixed(2)}</span>
                         ) : (
                           <span className="muted">—</span>
                         )}
                       </td>
-                      <td>{f.settled ? fmtPrice(f.price) : <span className="muted">pending</span>}</td>
+                      <td className="num">{f.settled ? fmtPrice(f.price) : <span className="muted">pending</span>}</td>
                     </tr>
                   );
                 })}
@@ -187,7 +227,7 @@ export function EnergyMonitoringPage() {
             </table>
           </div>
         )}
-      </div>
+      </Section>
     </div>
   );
 }

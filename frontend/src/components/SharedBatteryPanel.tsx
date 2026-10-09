@@ -1,4 +1,4 @@
-import { Gauge } from "./Gauge";
+import { BigBattery, KV } from "./ui";
 import { fmtPrice } from "../format";
 import type { SharedBatteryStatus } from "../types";
 
@@ -6,39 +6,23 @@ import type { SharedBatteryStatus } from "../types";
 export function SharedBatteryPanel({ status }: { status: SharedBatteryStatus }) {
   return (
     <div>
-      <Gauge
-        label={`Rented space (${status.rented.households} households)`}
+      <BigBattery
+        label="🏡 Rented to households"
         value={status.rented.usedKwh}
         max={status.rented.capacityKwh}
-        color="var(--color-accent)"
+        sub={`${status.rented.households} household${status.rented.households === 1 ? "" : "s"} storing energy here`}
       />
-      <Gauge label="Grid pool (operator)" value={status.gridPool.chargeKwh} max={status.gridPool.capacityKwh} color="var(--color-blue)" />
-      <div className="kv-list">
-        <div>
-          <span>Total capacity</span>
-          <strong>{status.capacityKwh} kWh</strong>
-        </div>
-        <div>
-          <span>Cap per household</span>
-          <strong>{status.rented.capPerHouseholdKwh} kWh</strong>
-        </div>
-        <div>
-          <span>Storage fee (decay)</span>
-          <strong>{(status.decayPerHour * 100).toFixed(0)}% / simulated hour</strong>
-        </div>
-        <div>
-          <span>Grid pool buys below</span>
-          <strong>{fmtPrice(status.gridBuysBelow)} TEC/kWh</strong>
-        </div>
-        <div>
-          <span>Grid pool sells above</span>
-          <strong>{fmtPrice(status.gridSellsAbove)} TEC/kWh</strong>
-        </div>
-        <div>
-          <span>Green energy in grid pool</span>
-          <strong>{status.gridPool.greenKwh.toFixed(2)} kWh</strong>
-        </div>
-      </div>
+      <BigBattery label="⚙️ Grid pool (operator)" value={status.gridPool.chargeKwh} max={status.gridPool.capacityKwh} sub="Bought cheap, sold in the auction when energy is short" />
+      <KV
+        rows={[
+          ["Total size (level)", `${status.capacityKwh} kWh`],
+          ["Most one household can rent (level)", `${status.rented.capPerHouseholdKwh} kWh`],
+          ["Storage fee (rate)", `${(status.decayPerHour * 100).toFixed(0)}% of stored kWh per sim. hour`],
+          ["Pool buys below (price)", `${fmtPrice(status.gridBuysBelow)} TEC/kWh`],
+          ["Pool sells above (price)", `${fmtPrice(status.gridSellsAbove)} TEC/kWh`],
+          ["Green energy in pool (level)", `${status.gridPool.greenKwh.toFixed(2)} kWh`],
+        ]}
+      />
     </div>
   );
 }

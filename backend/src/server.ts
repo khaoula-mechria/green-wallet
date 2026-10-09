@@ -32,6 +32,11 @@ async function start() {
     console.log("[server] empty database detected — seeding demo microgrid (2 producers, 5 prosumers, 4 consumers)");
     await seedDemoData(container, (msg) => console.log(msg));
   }
+  // Demo: a marketplace that never had an offer gets a few to start with.
+  const offerCount = (db.prepare(`SELECT COUNT(*) as n FROM energy_offers`).get() as { n: number }).n;
+  if (offerCount === 0 && env.demoMarketEnabled && env.simulationEnabled) {
+    await container.simulation.demoMarket(true);
+  }
 
   httpServer.listen(env.port, () => {
     console.log(`[server] listening on http://localhost:${env.port} (${env.nodeEnv})`);
